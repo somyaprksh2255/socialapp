@@ -1,0 +1,56 @@
+/* Squado Admin — shared product design system, adapted for an operational workspace. */
+:root { --admin-line: color-mix(in srgb, var(--ink) 18%, transparent); }
+body { background: var(--bg); color: var(--ink); }
+.admin-shell { width: min(1180px, 100%); margin: 0 auto; padding: 22px max(18px, env(safe-area-inset-left, 0px)) calc(32px + env(safe-area-inset-bottom, 0px)); }
+.admin-top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:30px; }
+.admin-brand { display:flex; align-items:center; gap:11px; min-width:0; }
+.admin-brand img { display:block; object-fit:contain; }
+.admin-brand strong { display:block; font-size:1.1rem; line-height:1.2; font-weight:700; }
+.admin-brand small { display:block; color:var(--mut); font-size:.8rem; }
+.admin-panel, .admin-view .panel, .admin-view .card { background:var(--card); border:2px solid var(--ink); border-radius:22px; box-shadow:5px 5px 0 var(--ink); padding:clamp(16px, 2.5vw, 24px); min-width:0; }
+.admin-login { width:min(480px, 100%); margin:clamp(24px, 7vh, 76px) auto; }
+.admin-login h1, .admin-heading-row h1 { margin:10px 0 9px; font-size:clamp(2rem, 5vw, 3.1rem); }
+.admin-eyebrow { display:inline-flex; align-items:center; gap:6px; color:var(--pur); font-size:.75rem; font-weight:700; letter-spacing:.09em; }
+.admin-field, .admin-view .field { display:grid; gap:7px; margin:16px 0; min-width:0; }
+.admin-field label, .admin-view .field label { color:var(--ink); font-size:.9rem; font-weight:600; }
+.admin-field input, .admin-field select, .admin-field textarea, .admin-view .field input, .admin-view .field select, .admin-view .field textarea, .admin-view input:not([type=checkbox]), .admin-view select, .admin-view textarea { width:100%; min-width:0; border:2px solid var(--ink); background:var(--bg); color:var(--ink); border-radius:13px; padding:12px 13px; font:inherit; outline:none; }
+.admin-field input:focus, .admin-field select:focus, .admin-field textarea:focus, .admin-view input:focus, .admin-view select:focus, .admin-view textarea:focus { border-color:var(--pur); box-shadow:0 0 0 3px color-mix(in srgb, var(--pur) 18%, transparent); }
+.admin-submit { width:100%; margin-top:4px; }
+.admin-footnote { font-size:.82rem; margin-top:18px; }
+.admin-heading-row { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; flex-wrap:wrap; margin:12px 0 22px; }
+.admin-heading-row h1 { margin-bottom:4px; }
+.admin-heading-row .mut { margin:0; }
+.admin-role-pill { display:inline-flex; padding:7px 12px; background:var(--lime); color:var(--ink); border:2px solid var(--ink); border-radius:999px; font-size:.75rem; font-weight:700; }
+.admin-tabs { display:flex; gap:9px; flex-wrap:wrap; margin:20px 0 24px; }
+.admin-tab { appearance:none; border:2px solid var(--ink); border-radius:999px; padding:9px 15px; background:var(--card); color:var(--ink); font:600 .9rem/1.3 Poppins,system-ui,sans-serif; box-shadow:2px 2px 0 var(--ink); }
+.admin-tab:hover { transform:translateY(-1px); }
+.admin-tab.active { background:var(--pink); color:#fff; box-shadow:3px 3px 0 var(--ink); }
+.admin-view .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr)); gap:14px; }
+.admin-view .list { display:grid; gap:14px; }
+.admin-view .card, .admin-view .panel { padding:18px; box-shadow:4px 4px 0 var(--ink); }
+.admin-view .row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+.admin-view h2 { margin:0 0 10px; font-size:1.35rem; }
+.admin-view h3 { margin:0; font-size:1.08rem; }
+.admin-view p { overflow-wrap:anywhere; }
+.admin-view .muted { color:var(--mut); font-size:.9rem; }
+.admin-view .stat { font-size:2rem; font-weight:700; letter-spacing:-.04em; }
+.admin-view .pill { display:inline-flex; align-items:center; border:1.5px solid var(--ink); border-radius:999px; padding:4px 10px; font-size:.75rem; font-weight:600; background:var(--bg); color:var(--ink); }
+.admin-view .btn { border:2px solid var(--ink); border-radius:999px; padding:9px 15px; background:var(--pink); color:#fff; font-weight:600; box-shadow:3px 3px 0 var(--ink); }
+.admin-view .btn.secondary { background:var(--card); color:var(--ink); box-shadow:none; }
+.admin-view .btn.danger { background:#a91f50; color:#fff; }
+.admin-view .btn:focus-visible, .admin-tab:focus-visible { outline:3px solid var(--pur); outline-offset:3px; }
+.admin-view .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+.admin-view .divider { height:2px; background:var(--admin-line); margin:16px 0; }
+.admin-notice { border:2px solid var(--ink); border-radius:15px; padding:12px 15px; margin:14px 0; background:#eee8ff; color:#24184c; box-shadow:3px 3px 0 var(--ink); }
+.admin-notice.error { background:#ffe1e8; color:#721b39; }
+.hidden { display:none !important; }
+@media (max-width:640px) { .admin-shell { padding-top:14px; } .admin-top { margin-bottom:20px; } .admin-heading-row { align-items:flex-start; } .admin-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-tab { padding:10px 8px; font-size:.82rem; } .admin-view .card, .admin-view .panel { padding:15px; } }
+
+.admin-location-search{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.admin-location-search input{flex:1;min-width:220px}
+.admin-location-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+.admin-location-result{display:flex;flex-direction:column;gap:5px;text-align:left;padding:12px;border:2px solid var(--ink);border-radius:14px;background:var(--card);color:var(--ink);font:inherit;cursor:pointer;overflow-wrap:anywhere}
+.admin-location-result small{color:var(--muted);font-size:.78rem}
+.admin-location-result span{color:var(--pink);font-weight:700;font-size:.82rem}
+.admin-location-selected{padding:10px 12px;border:1px solid var(--line);border-radius:12px;font-size:.85rem}
+@media(max-width:600px){.admin-location-results{grid-template-columns:1fr}}
