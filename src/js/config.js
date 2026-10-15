@@ -14,7 +14,7 @@ window.SQUADO_CONFIG = {
        appear in this file, any frontend source, or any committed file. */
     supabaseUrl: 'https://mswawkjoeiwehjiknfmi.supabase.co',
     supabasePublishableKey: 'sb_publishable_fBhMF8SEXgcG05ec5MVGaQ_Cvr-fSUM',
-    apiBaseUrl: '',
+    apiBaseUrl: 'https://squado-api.onrender.com/',
     googleClientId: '607793013271-q9ma9b52h33mmdik9862e769vd8kk5vu.apps.googleusercontent.com',
 
     /* The real, deployed https address of this app, used inside meetup QR codes so a phone's camera opens Squado in its browser.
