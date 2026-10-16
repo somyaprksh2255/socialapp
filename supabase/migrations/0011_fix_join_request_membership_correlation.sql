@@ -9,6 +9,7 @@ create policy join_requests_insert
     to authenticated
     with check (
         user_id = auth.uid()
+        and state = 'pending'
         and exists (
             select 1
             from public.plans p
