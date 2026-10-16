@@ -19,12 +19,10 @@ function pings() {
 
     const o = [];
 
-    const L = S.plans.filter(
+    const L = vis().filter(
         p =>
-            p.status == 'open' &&
             p.creator != 'me' &&
             !p.members.includes('me') &&
-            !S.blocked.includes(p.creator) &&
             d(p) != null &&
             d(p) <= 6
     );
