@@ -14,17 +14,33 @@ const pl = id =>
 const viewCity = () =>
     isCity(S.discoveryCity) ? S.discoveryCity : (isCity(S.me.city) ? S.me.city : null);
 
-const planCity = p =>
-    p.city || cityOfLoc(p.loc);
+const cityKey = value => String(value || '').trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+const sameCity = (a, b) => !!cityKey(a) && !!cityKey(b) && cityKey(a) === cityKey(b);
+const planCity = p => p && (p.city || cityOfLoc(p.loc));
 
-const vis = () =>
-    S.plans.filter(
-        p =>
-            !S.blocked.includes(p.creator) &&
-            p.status == 'open' &&
-            isCity(planCity(p)) &&
-            (!viewCity() || planCity(p) == viewCity())
+/* Guests do not receive plan/event discovery data. Normalize city comparisons so capitalization
+   and spacing cannot cause a selected-city filter mismatch. */
+const vis = () => {
+    if (tier() === 'guest') return [];
+    const selected = viewCity();
+    return S.plans.filter(p =>
+        p &&
+        !S.blocked.includes(p.creator) &&
+        p.status === 'open' &&
+        isCity(planCity(p)) &&
+        (!selected || sameCity(planCity(p), selected))
     );
+};
+
+const visibleEvents = () => {
+    if (tier() === 'guest') return [];
+    const selected = viewCity();
+    return (Array.isArray(S.events) ? S.events : []).filter(e =>
+        e &&
+        e.status === 'published' &&
+        (!selected || sameCity(e.city || e.locCity || cityOfLoc(e.loc), selected))
+    );
+};
 
 const unreadN = () =>
     myNotifs().filter(n => n.u).length;
