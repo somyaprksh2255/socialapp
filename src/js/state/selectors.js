@@ -1,7 +1,7 @@
 const usr = id =>
     id == 'me'
         ? S.me
-        : S.users.find(u => u.id == id) || {
+        : S.users.find(u => u.id == id || u.sub == id) || {
             name: 'Someone',
             interests: [],
             city: ''

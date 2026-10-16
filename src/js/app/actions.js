@@ -25,9 +25,9 @@ function notifyLinkedPlanMembers(event, message, cancelPlans = false) {
 function saveEvent(publish) {
     if (!canManageEvents()) return toast('Only authorized Squado admins can manage Events.');
     const f = O.E;
-    const missing = !f.title.trim() ? 'title' : !f.info.trim() ? 'description' : !f.date ? 'date' : !f.startTime ? 'start time' : !f.endTime ? 'end time' : !f.loc.trim() ? 'area / locality' : !f.venue.trim() ? 'venue / meeting point' : !f.host.trim() ? 'organizer' : '';
+    const missing = !f.title.trim() ? 'title' : !f.info.trim() ? 'description' : !f.date ? 'start date' : !f.endDate ? 'end date' : !f.startTime ? 'start time' : !f.endTime ? 'end time' : !f.loc.trim() ? 'area / locality' : !f.venue.trim() ? 'venue / meeting point' : !f.host.trim() ? 'organizer' : '';
     if (publish && missing) return toast('Please add the Event ' + missing + '.');
-    if (publish && f.endTime <= f.startTime) return toast('End time must be after start time. For overnight events, use a separate session.');
+    if (publish && (f.endDate < f.date || (f.endDate === f.date && f.endTime <= f.startTime))) return toast('Event end date/time must be after its start date/time.');
     if (publish && f.date < new Date().toISOString().slice(0,10)) return toast('Choose today or a future date.');
     if (f.capacity && (!Number.isInteger(Number(f.capacity)) || Number(f.capacity) < 1 || Number(f.capacity) > 100000)) return toast('Enter a valid Event capacity.');
     const now = Date.now();
@@ -39,6 +39,8 @@ function saveEvent(publish) {
         title: f.title.trim(),
         info: f.info.trim(),
         dateISO: f.date,
+        endDateISO: f.endDate,
+        endDate: f.endDate ? new Date(f.endDate + 'T00:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) : '',
         date: f.date ? new Date(f.date + 'T00:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) : '',
         dateLabel: f.date ? new Date(f.date + 'T00:00:00').toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}) : '',
         startTime: f.startTime,
@@ -59,12 +61,12 @@ function saveEvent(publish) {
     const previous = i >= 0 ? S.events[i] : null;
     if (i >= 0) S.events[i] = record; else S.events.unshift(record);
     if (publish && previous && previous.status === 'published' &&
-        (previous.dateISO !== record.dateISO || previous.startTime !== record.startTime ||
+        (previous.dateISO !== record.dateISO || previous.endDateISO !== record.endDateISO || previous.startTime !== record.startTime ||
          previous.endTime !== record.endTime || previous.loc !== record.loc || previous.venue !== record.venue)) {
         notifyLinkedPlanMembers(record, `Schedule or location changed to ${record.dateLabel} · ${record.when} · ${record.loc}.`);
     }
     save();
-    O.E = { id:'', title:'', category:'garba', info:'', date:'', startTime:'', endTime:'', loc:'', venue:'', ageGroup:'', capacity:'', visibility:'public', host:'', status:'draft' };
+    O.E = { id:'', title:'', category:'garba', info:'', date:'', endDate:'', startTime:'', endTime:'', loc:'', venue:'', ageGroup:'', capacity:'', visibility:'public', host:'', status:'draft' };
     O.createMode = 'choose';
     toast(publish ? 'Event published.' : 'Draft saved.');
     goHash(publish ? '#/event/' + record.id : '#/create');
@@ -170,127 +172,105 @@ const A = {
     home() {
         toast('Get home safe 🫡');
     },
-    post() {
+    async post() {
         const w = O.W;
         let miss = !w.type ? 'what we\'re doing' : w.type == 'custom' && !(w.custom || '').trim() ? 'a name for it' : !w.loc ? 'where' : !w.when ? 'when' : !w.size ? 'squad size' : '';
-        if (miss)
-            return toast('Pick ' + miss + ' first');
+        if (miss) return toast('Pick ' + miss + ' first');
         const verifiedCustom = w.locSource === 'openstreetmap-nominatim' && w.locLat != null && w.locLng != null && Number.isFinite(Number(w.locLat)) && Number.isFinite(Number(w.locLng)) && isCity(w.locCity || S.me.city);
         const knownLocality = !!LC[w.loc] && cityOfLoc(w.loc) === S.me.city;
-        if ((!verifiedCustom && !knownLocality) || !isCity(S.me.city))
+        const linkedEvent = w.event && S.events.find(e => e.id == w.event && e.status === 'published');
+        const eventDefaultLocation = !!linkedEvent && [linkedEvent.venue, linkedEvent.loc].filter(Boolean).includes(w.loc);
+        if ((!verifiedCustom && !knownLocality && !eventDefaultLocation) || !isCity(S.me.city))
             return toast(isCity(S.me.city) ? 'Choose a verified place from the map' : 'Choose your city from a map result first');
         const who = w.who || 'Everyone';
-        if (!hostOk(who))
-            return toast(who + ' plans need a matching profile gender');
-        if (!capacityOk(Number(w.size)))
-            return toast('Pick a squad size between ' + squadMin() + ' and ' + squadMax());
+        if (!hostOk(who)) return toast(who + ' plans need a matching profile gender');
+        if (!capacityOk(Number(w.size))) return toast('Pick a squad size between ' + squadMin() + ' and ' + squadMax());
         let when = w.when;
-        if (when == 'Custom') {
-            const t = (w.time || '21:00').split(':'), H = +t[0];
-            when = (H % 12 || 12) + ':' + t[1] + ' ' + (H >= 12 ? 'PM' : 'AM');
-        }
-        const live = when == 'Now',
-            id = newPlanId(),
-            ev = w.event && S.events.find(e => e.id == w.event && e.status === 'published'),
-            cr = (w.carry || []).filter(c => !S.blocked.includes(c)).slice(0, w.size - 1);
-        S.plans.unshift({
-            id,
-            creator: 'me',
-            type: w.type,
-            custom: w.type == 'custom' ? w.custom.trim() : null,
+        if (when == 'Custom') { const t = (w.time || '21:00').split(':'), H = +t[0]; when = (H % 12 || 12) + ':' + t[1] + ' ' + (H >= 12 ? 'PM' : 'AM'); }
+        const live = when == 'Now', id = newPlanId();
+        const ev = w.event && S.events.find(e => e.id == w.event && e.status === 'published');
+        const cr = (w.carry || []).filter(c => !S.blocked.includes(c)).slice(0, w.size - 1);
+        const planDay = linkedEvent && w.day && /^\d{4}-\d{2}-\d{2}$/.test(w.day)
+            ? new Date(w.day + 'T00:00:00').toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' })
+            : (w.day || 'Today');
+        const plan = {
+            id, creator: 'me', type: w.type, custom: w.type == 'custom' ? w.custom.trim() : null,
             title: ev ? `Anyone going to ${ev.title}?` : {
-                garba: 'Garba gang, assemble',
-                pandal: 'Pandal hop, no plans',
-                bhandara: 'Anyone wanna go to this Bhandara?',
-                food: 'Food run?',
-                chai: 'Chai & yap?',
-                photo: 'Photo walk, pics first',
-                shopping: 'Shopping spree?',
-                city: 'City explore',
-                outside: 'Still out, still down',
-                custom: (w.custom || '').trim()
+                garba: 'Garba gang, assemble', pandal: 'Pandal hop, no plans', bhandara: 'Anyone wanna go to this Bhandara?',
+                food: 'Food run?', chai: 'Chai & yap?', photo: 'Photo walk, pics first', shopping: 'Shopping spree?',
+                city: 'City explore', outside: 'Still out, still down', custom: (w.custom || '').trim()
             }[w.type],
-            desc: w.desc.trim() || 'No plans, just vibes.',
-            vibe: w.vibe,
-            loc: w.loc,
+            desc: w.desc.trim() || 'No plans, just vibes.', vibe: w.vibe, loc: w.loc,
             locLat: w.locLat != null && Number.isFinite(Number(w.locLat)) ? Number(w.locLat) : (LC[w.loc] ? LC[w.loc][0] : null),
             locLng: w.locLng != null && Number.isFinite(Number(w.locLng)) ? Number(w.locLng) : (LC[w.loc] ? LC[w.loc][1] : null),
-            locSource: w.locSource || (LC[w.loc] ? 'supported-locality' : ''),
-            locPlace: w.locPlace || '',
-            city: w.locCity || cityOfLoc(w.loc) || S.me.city,
-            when: live ? 'LIVE NOW' : when,
-            live,
-            max: Number(w.size),
-            members: ['me', ...cr],
-            who,
-            reqs: [],
-            status: 'open',
-            day: w.day || 'Today',
-            auto: who !== 'Everyone' && w.mode == 'Auto-accept',
-            from: w.from || null,
-            event: w.event || null,
-            spot: 'Pin goes to the squad in the group chat',
-            created: Date.now()
-        });
+            locSource: w.locSource || (LC[w.loc] ? 'supported-locality' : ''), locPlace: w.locPlace || '',
+            city: w.locCity || cityOfLoc(w.loc) || S.me.city, when: live ? 'LIVE NOW' : when, live,
+            max: Number(w.size), members: ['me', ...cr], who, reqs: [], status: 'open', day: planDay,
+            auto: who !== 'Everyone' && w.mode == 'Auto-accept', from: w.from || null, event: w.event || null,
+            spot: 'Pin goes to the squad in the group chat', created: Date.now()
+        };
+        try {
+            const saved = await publishSharedPlan(plan);
+            S.plans = (S.plans || []).filter(p => p.id !== id);
+            S.plans.unshift(saved);
+        } catch (e) {
+            console.error('[plans] publish failed:', { stage: e && e.code, databaseCode: e && e.cause && e.cause.code, databaseMessage: e && e.cause && e.cause.message, details: e && e.cause && e.cause.details });
+            const databaseCode = e && e.cause && e.cause.code;
+            const databaseMessage = String(e && e.cause && e.cause.message || '');
+            const msg = (databaseCode === '42703' || databaseCode === 'PGRST204' || /column .* does not exist|Could not find the .* column/i.test(databaseMessage))
+                ? 'Squado database is missing required plan fields. An admin needs to apply the latest Supabase migrations.'
+                : databaseCode === '42501' || /row-level security|permission denied/i.test(databaseMessage)
+                ? 'Squado database permissions blocked publishing. Please sign in again; if it continues, contact an admin.'
+                : databaseCode === '23503'
+                ? 'Your account or linked Event is not synced yet. Refresh and try again.'
+                : e && e.code === 'plan_host_membership_failed'
+                ? 'Plan could not be completed because group membership setup failed. Please contact an admin.'
+                : e && e.code === 'supabase_not_configured' ? 'Squado backend is not configured. This plan was not published.'
+                : e && e.code === 'authentication_required' ? 'Sign in again before publishing a plan.'
+                : e && e.code === 'profile_sync_failed' ? 'Could not save your profile to Squado. Please retry.'
+                : e && e.code === 'plan_invalid' ? 'Some plan details are invalid. Check the location and squad size.'
+                : 'Could not publish this plan to Squado. Check your connection and try again.';
+            return toast(msg);
+        }
         S.me.rel.hosted++;
-        if (cr.length)
-            sys(id, 'Squad carried over from the last stop 🔁');
+        if (cr.length) sys(id, 'Squad carried over from the last stop 🔁');
         O.W = { type: '', vibe: [], loc: '', locLat: null, locLng: null, locSource: '', locPlace: '', when: '', size: 0, desc: '' };
-        save();
-        confetti();
-        goHash('#/posted/' + id);
+        save(); confetti(); goHash('#/posted/' + id);
     },
-    postOut() {
-        const o = O.os,
-            mv = o.move.replace(/^\S+ /, ''),
-            lb = mv == 'Custom' ? o.cname.trim() : mv,
-            id = newPlanId(),
-            who = o.who || 'Everyone';
-        if (!capacityOk(Number(o.size)))
-            return toast('Pick a squad size between ' + squadMin() + ' and ' + squadMax());
+    async postOut() {
+        const o = O.os, mv = o.move.replace(/^\S+ /, ''), lb = mv == 'Custom' ? o.cname.trim() : mv, id = newPlanId(), who = o.who || 'Everyone';
+        if (!capacityOk(Number(o.size))) return toast('Pick a squad size between ' + squadMin() + ' and ' + squadMax());
         const verifiedCustom = o.locSource === 'openstreetmap-nominatim' && o.locLat != null && o.locLng != null && Number.isFinite(Number(o.locLat)) && Number.isFinite(Number(o.locLng)) && isCity(o.locCity || S.me.city);
         const knownLocality = !!LC[o.loc] && cityOfLoc(o.loc) === S.me.city;
         if ((!verifiedCustom && !knownLocality) || !isCity(S.me.city))
             return toast(isCity(S.me.city) ? 'Choose a verified place from the map' : 'Choose your city from a map result first');
-        if (!hostOk(who))
-            return toast(who + ' plans need a matching profile gender');
-        S.plans.unshift({
-            id,
-            creator: 'me',
-            type: 'outside',
-            custom: 'Still out · ' + lb,
-            title: {
-                Chai: 'Chai & yap?',
-                Food: 'Food run?',
-                Garba: 'Anyone still dancing?',
-                'Pandal Hopping': 'Pandal hop, right now?',
-                Photos: 'Photo walk, right now?',
-                Walk: 'Walk & talk?',
-                Explore: 'Let\'s explore'
-            }[mv] || lb,
-            desc: o.desc.trim() || 'Friends left. I\'m not done.',
-            vibe: ['🫠 No plans, just vibes'],
-            loc: o.loc,
+        if (!hostOk(who)) return toast(who + ' plans need a matching profile gender');
+        const plan = {
+            id, creator: 'me', type: 'outside', custom: 'Still out · ' + lb,
+            title: ({ Chai: 'Chai & yap?', Food: 'Food run?', Garba: 'Anyone still dancing?', 'Pandal Hopping': 'Pandal hop, right now?', Photos: 'Photo walk, right now?', Walk: 'Walk & talk?', Explore: 'Let\'s explore' })[mv] || lb,
+            desc: o.desc.trim() || 'Friends left. I\'m not done.', vibe: ['🫠 No plans, just vibes'], loc: o.loc,
             locLat: o.locLat != null && Number.isFinite(Number(o.locLat)) ? Number(o.locLat) : (LC[o.loc] ? LC[o.loc][0] : null),
             locLng: o.locLng != null && Number.isFinite(Number(o.locLng)) ? Number(o.locLng) : (LC[o.loc] ? LC[o.loc][1] : null),
-            locSource: o.locSource || (LC[o.loc] ? 'supported-locality' : ''),
-            locPlace: o.locPlace || '',
-            city: o.locCity || cityOfLoc(o.loc) || S.me.city,
-            when: 'LIVE NOW',
-            live: true,
-            max: Number(o.size),
-            members: ['me'],
-            who,
-            reqs: [],
-            status: 'open',
-            spot: 'Pin goes to the squad in the group chat',
-            created: Date.now()
-        });
+            locSource: o.locSource || (LC[o.loc] ? 'supported-locality' : ''), locPlace: o.locPlace || '',
+            city: o.locCity || cityOfLoc(o.loc) || S.me.city, when: 'LIVE NOW', live: true, max: Number(o.size),
+            members: ['me'], who, reqs: [], status: 'open', day: o.day || 'Today', auto: false,
+            event: null, spot: 'Pin goes to the squad in the group chat', created: Date.now()
+        };
+        try {
+            const saved = await publishSharedPlan(plan);
+            S.plans = (S.plans || []).filter(p => p.id !== id);
+            S.plans.unshift(saved);
+        } catch (e) {
+            console.error('[plans] Still Outside publish failed:', e && e.code || e);
+            const msg = e && e.code === 'supabase_not_configured' ? 'Squado backend is not configured. This plan was not published.'
+                : e && e.code === 'authentication_required' ? 'Sign in again before publishing a plan.'
+                : e && e.code === 'profile_sync_failed' ? 'Could not save your profile to Squado. Please retry.'
+                : 'Could not publish this plan to Squado. Check your connection and try again.';
+            return toast(msg);
+        }
         S.me.rel.hosted++;
         O.os = { step: 0, move: '', size: 0, loc: '', locLat: null, locLng: null, locSource: '', locPlace: '', areaLat: null, areaLng: null, desc: '', cname: '' };
-        save();
-        confetti();
-        goHash('#/posted/' + id);
+        save(); confetti(); goHash('#/posted/' + id);
     },
     join(e) {
         const p = pl(e.dataset.v), g = S.me.gender;
@@ -413,7 +393,7 @@ const A = {
     },
     createEventMode() {
         if (!canManageEvents()) return toast('Only authorized Squado admins can create Events.');
-        O.E = { id:'', title:'', category:'garba', info:'', date:'', startTime:'', endTime:'', loc:'', venue:'', ageGroup:'', capacity:'', visibility:'public', host:'', status:'draft' };
+        O.E = { id:'', title:'', category:'garba', info:'', date:'', endDate:'', startTime:'', endTime:'', loc:'', venue:'', ageGroup:'', capacity:'', visibility:'public', host:'', status:'draft' };
         O.createMode = 'event';
         render();
     },
@@ -428,7 +408,7 @@ const A = {
         if (!canManageEvents()) return toast('Admin access required.');
         const ev = S.events.find(x => x.id === e.dataset.v);
         if (!ev) return toast('Event not found.');
-        O.E = { id:ev.id, title:ev.title||'', category:ev.tag||'garba', info:ev.info||'', date:ev.dateISO||ev.date||'', startTime:ev.startTime||'', endTime:ev.endTime||'', loc:ev.loc||'', venue:ev.venue||'', ageGroup:ev.ageGroup||'', capacity:ev.capacity||'', visibility:ev.visibility||'public', host:ev.host||'', status:ev.status||'published' };
+        O.E = { id:ev.id, title:ev.title||'', category:ev.tag||'garba', info:ev.info||'', date:ev.dateISO||ev.date||'', endDate:ev.endDateISO||ev.endDate||ev.dateISO||ev.date||'', startTime:ev.startTime||'', endTime:ev.endTime||'', loc:ev.loc||'', venue:ev.venue||'', ageGroup:ev.ageGroup||'', capacity:ev.capacity||'', visibility:ev.visibility||'public', host:ev.host||'', status:ev.status||'published' };
         O.createMode = 'event';
         goHash('#/create');
     },
@@ -452,13 +432,13 @@ const A = {
         O.W = {
             type: ev.tag || ev.category || 'garba',
             vibe: [],
-            loc: ev.loc || '',
+            loc: ev.loc || ev.venue || '',
             when: 'Custom',
             time: ev.startTime || '19:00',
             size: 0,
             desc: `A Plan for ${ev.title}`,
             event: ev.id,
-            day: ev.dateISO || ev.date || 'Today',
+            day: ev.dateISO || 'Today',
             eventDate: ev.dateISO || ev.date || '',
             eventStartTime: ev.startTime || ''
         };
@@ -591,8 +571,8 @@ const A = {
         f.error = '';
         fbMeetupSheet(f.id);
         /* let the "Sending…" state paint before the work runs */
-        setTimeout(() => {
-            const r = fbSaveMeetup(pl(f.id), f);
+        setTimeout(async () => {
+            const r = await fbSaveMeetup(pl(f.id), f);
             const open = O.fm === f && O.tok == f.tok;
             f.busy = false;
             if (r == 'ok') {
@@ -686,8 +666,8 @@ const A = {
         F.error = '';
         fbRateSheet(p);
         /* let the "Sending…" state paint before the work runs */
-        setTimeout(() => {
-            const r = fbSavePeople(p, d);
+        setTimeout(async () => {
+            const r = await fbSavePeople(p, d);
             const open = O.fb === F && O.tok == F.tok;
             F.busy = false;
             if (r == 'ok') {
@@ -923,21 +903,40 @@ const A = {
             return toast('That profile isn\'t available.');
         modal(profileSheet(e.dataset.v));
     },
-    block(e) {
+    async block(e) {
         const id = e.dataset.v;
-        if (!idOk(id) || id == 'me' || !S.users.some(u => u.id == id))
+        if (!idOk(id) || id == 'me' || !S.users.some(u => u.id == id || u.sub == id))
             return toast('That person isn\'t available.');
-        if (!S.blocked.includes(id))
-            S.blocked.push(id);
-        save();
-        modal('');
-        toast(usr(id).name + ' blocked');
-        render();
+        if (S.blocked.includes(id)) return toast('This person is already blocked.');
+        try {
+            let blockId = id;
+            if (typeof supabaseConfigured === 'function' && supabaseConfigured() && !S.me.guest) {
+                const savedBlock = await setSharedBlock(id, true);
+                if (savedBlock && savedBlock.targetUid) blockId = savedBlock.targetUid;
+            }
+            if (!S.blocked.includes(blockId)) S.blocked.push(blockId);
+            save(); modal(''); toast(usr(id).name + ' blocked'); render();
+        } catch (err) {
+            console.warn('[blocks] save failed:', err && err.code || err);
+            toast('Could not save this block to your account. Check your connection and try again.');
+        }
     },
-    unblock(e) {
-        S.blocked = S.blocked.filter(b => b != e.dataset.v);
-        save();
-        render();
+    async unblock(e) {
+        const id = e.dataset.v;
+        try {
+            if (typeof supabaseConfigured === 'function' && supabaseConfigured() && !S.me.guest)
+                await setSharedBlock(id, false);
+            S.blocked = S.blocked.filter(b => b != id);
+            save();
+            if (document.querySelector('#modal .blocked-users-dialog')) modal(blockedUsersOverlay());
+            else render();
+        } catch (err) {
+            console.warn('[blocks] remove failed:', err && err.code || err);
+            toast('Could not update your block list. Please try again.');
+        }
+    },
+    blockedList() {
+        modal(blockedUsersOverlay());
     },
     report(e) {
         const kind = e.dataset.k || 'plan';
@@ -1119,10 +1118,21 @@ A.goPlan = e => {
         goHash('#/plan/' + e.dataset.v);
 };
 A.goBack = () => {
-    if (typeof history.back == 'function' && history.length > 1)
-        history.back();
-    else
-        goHash('#/home');
+    let trail = [];
+    try { trail = JSON.parse(sessionStorage.getItem('squado-route-trail-v1') || '[]'); } catch (e) { }
+    const current = location.hash || '#/home';
+    if (!Array.isArray(trail)) trail = [];
+    const idx = trail.lastIndexOf(current);
+    const previous = idx > 0 ? trail[idx - 1] : (trail.length > 1 ? trail[trail.length - 2] : '');
+    if (previous && /^#\//.test(previous) && previous !== current) {
+        /* Navigate to the known in-app predecessor; do not trust unrelated browser history entries. */
+        trail = trail.slice(0, Math.max(1, idx));
+        try { sessionStorage.setItem('squado-route-trail-v1', JSON.stringify(trail)); } catch (e) { }
+        goHash(previous);
+        return;
+    }
+    if (typeof history.back == 'function' && history.length > 1) history.back();
+    else goHash('#/home');
 };
 A.reviewRequest = e => reviewRequest(e);
 A.openMediaCamera = e => openMediaCamera(e);

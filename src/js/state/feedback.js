@@ -55,7 +55,7 @@ const fbPending = () =>
 const fbId = () => 'f' + Date.now() + Math.random().toString(36).slice(2, 6);
 
 /* returns 'ok' | 'ineligible' | 'duplicate' | 'rating' | 'save' */
-function fbSaveMeetup(p, d) {
+async function fbSaveMeetup(p, d) {
     if (!fbEligible(p))
         return 'ineligible';
 
@@ -78,6 +78,9 @@ function fbSaveMeetup(p, d) {
         at: Date.now()
     };
 
+    try { await submitSharedFeedback(p, 'meetup', { rating, tags: rec.tags, comment: rec.comment }); }
+    catch (e) { return e && e.code === 'duplicate' ? 'duplicate' : e && e.code === 'ineligible' ? 'ineligible' : 'save'; }
+
     S.feedback.push(rec);
 
     if (!save()) {
@@ -91,7 +94,7 @@ function fbSaveMeetup(p, d) {
 /* d = { personId: { r: 1-5, t:[tags], c:'comment' } } holds only the people the reviewer chose.
    Returns 'ok' | 'ineligible' | 'empty' | 'rating' | 'duplicate' | 'save'.
    All-or-nothing: if any chosen person has an invalid rating nothing is stored. */
-function fbSavePeople(p, d) {
+async function fbSavePeople(p, d) {
     if (!fbEligible(p))
         return 'ineligible';
 
@@ -139,6 +142,12 @@ function fbSavePeople(p, d) {
     if (!recs.length)
         return dup ? 'duplicate' : 'empty';
 
+    for (const rec of recs) {
+        const target = (S.users || []).find(u => u.id === rec.to || u.sub === rec.to);
+        try { await submitSharedFeedback(p, 'person', { rating: rec.rating, tags: rec.tags, comment: rec.comment }, target && (target.id || target.sub)); }
+        catch (e) { return e && e.code === 'duplicate' ? 'duplicate' : e && e.code === 'ineligible' ? 'ineligible' : 'save'; }
+    }
+
     S.feedback.push(...recs);
 
     if (!save()) {
@@ -154,6 +163,8 @@ function fbSavePeople(p, d) {
      tags = how often each tag was picked (including tags from older tag-only reviews)
    Meetup ratings are a different dataset and never enter this. People who were not rated get no number at all. */
 function fbAgg(u) {
+    const shared = S.trustSummaries && S.trustSummaries[u.sub || u.id];
+    if (shared && Number(shared.n) >= 3) return { n: Number(shared.n), avg: shared.avg == null ? null : Number(shared.avg), tags: shared.tags || {} };
     const R = S.feedback.filter(f => f.kind == 'person' && f.to == u.id);
     const rated = R.filter(f => f.rating >= 1 && f.rating <= 5);
     const tags = {};
@@ -180,6 +191,7 @@ function fbMine(p) {
 
 /* overall meetup totals for a plan: only once 3+ people answered, never any comment or reviewer */
 function fbSummary(p) {
+    if (S.feedbackSummaries && Object.prototype.hasOwnProperty.call(S.feedbackSummaries, p.id)) return S.feedbackSummaries[p.id] || null;
     const R = S.feedback.filter(f => f.kind == 'meetup' && f.planId == p.id);
 
     if (R.length < 3)

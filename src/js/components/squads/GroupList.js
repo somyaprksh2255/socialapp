@@ -95,7 +95,7 @@ function groupItem(p, active) {
    Rendering is gated on isHost(p); execution is re-checked at trigger time by RULES.hostScan / RULES.end + compHost. */
 function hostGroupCard(p, active) {
     return `
-        <div class="ghcard ${active ? 'on' : ''}">
+        <div class="ghcard hosted ${active ? 'on' : ''}">
             ${groupItem(p, active)}
 
             <div
@@ -105,7 +105,7 @@ function hostGroupCard(p, active) {
             >
                 <button
                     type="button"
-                    class="ghbtn"
+                    class="ghbtn ghbtn-scanner"
                     data-a="hostScan"
                     data-v="${p.id}"
                     aria-label="Open the QR attendance scanner for ${esc(p.title)}"
@@ -117,7 +117,7 @@ function hostGroupCard(p, active) {
 
                 <button
                     type="button"
-                    class="ghbtn"
+                    class="ghbtn ghbtn-completion"
                     data-a="ask"
                     data-do="end"
                     data-v="${p.id}"

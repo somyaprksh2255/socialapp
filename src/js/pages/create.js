@@ -12,7 +12,7 @@ function createPlanForm() {
 
   return `
     <main style="max-width:680px">
-      <a class="back" href="#/home">← Back</a>
+      <a class="back" href="#" data-a="goBack">← Back</a>
 
       <h1>Make a Plan</h1>
 
@@ -103,48 +103,40 @@ function createPlanForm() {
           <div><b>Choose another place</b><small>Search for a meeting spot in ${esc(S.me.city || 'your selected city')}.</small></div>
           <button class="btn pink sm" data-a="locationPicker" data-v="W.loc">${I("map-pinned", "1em")} Search map</button>
         </div>
-        ${w.loc && w.locSource === 'openstreetmap-nominatim'
-          ? `<div class="location-selected"><span class="location-selected__pin">${I("map-pin", "1.1em")}</span><div><b>${esc(w.loc)}</b><small>${esc([w.locCity || S.me.city, w.locState].filter(Boolean).join(', '))}</small></div><button class="btn ghost sm" data-a="locationPicker" data-v="W.loc">Change</button></div>`
+        ${w.loc && (w.locSource === 'openstreetmap-nominatim' || ev)
+          ? `<div class="location-selected"><span class="location-selected__pin">${I("map-pin", "1.1em")}</span><div><b>${esc(w.loc)}</b><small>${esc(w.locSource === 'openstreetmap-nominatim' ? [w.locCity || S.me.city, w.locState].filter(Boolean).join(', ') : (ev ? `Event venue · ${ev.title}` : S.me.city))}</small></div><button class="btn ghost sm" data-a="locationPicker" data-v="W.loc">Change</button></div>`
           : `<p class="mut location-flow-hint">Select a suggested place or search the map to set your meeting point.</p>`}
       </div>
       <p class="mut location-privacy-note">Only the area shows publicly. Exact spot goes to the squad.</p>
 
       <h2>Which day?</h2>
 
-      ${chips(
-        ["Today", "Tomorrow"],
-        "W.day",
-        w.day || "Today",
-      )}
+      ${ev ? `
+        <div class="event-default-field">
+          <label for="event-plan-day">Event date</label>
+          <input id="event-plan-day" type="date" data-in="W.day" min="${esc(ev.dateISO || '')}" value="${esc(w.day || ev.dateISO || ev.date || '')}" aria-label="Plan date">
+          <small>Prefilled from this Event — change it if your squad is meeting another day.</small>
+        </div>
+      ` : chips(["Today", "Tomorrow"], "W.day", w.day || "Today")}
 
       <h2>When we outside?</h2>
 
-      ${chips(
+      ${ev ? `
+        <div class="event-default-field">
+          <label for="event-plan-time">Event start time</label>
+          <input id="event-plan-time" type="time" data-in="W.time" value="${esc(w.time || ev.startTime || '19:00')}" aria-label="Plan time">
+          <small>Prefilled from this Event — customize the time for your plan.</small>
+        </div>
+      ` : chips(
         w.day == "Tomorrow"
           ? ["9:00 PM", "10:00 PM", "11:00 PM", "Custom"]
-          : [
-              "Now",
-              "9:00 PM",
-              "10:00 PM",
-              "11:00 PM",
-              "Custom",
-            ],
+          : ["Now", "9:00 PM", "10:00 PM", "11:00 PM", "Custom"],
         "W.when",
         w.when,
       )}
-
-      ${
-        w.when == "Custom"
-          ? `
-            <input
-              type="time"
-              style="margin-top:10px;max-width:180px"
-              data-in="W.time"
-              aria-label="Custom time"
-            >
-          `
-          : ""
-      }
+      ${!ev && w.when == "Custom" ? `
+        <input type="time" style="margin-top:10px;max-width:180px" data-in="W.time" value="${esc(w.time || '')}" aria-label="Custom time">
+      ` : ""}
 
       <h2>Who can join?</h2>
 

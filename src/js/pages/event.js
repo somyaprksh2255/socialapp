@@ -5,11 +5,12 @@ function eventPage(id) {
   if (!e || e.status === 'cancelled') return fallbackPage('event');
   const admin = canManageEvents();
   const plans = S.plans.filter(p => p.event === id && p.status === 'open' && !S.blocked.includes(p.creator));
-  const when = [e.dateLabel || e.date, e.when].filter(Boolean).join(' · ');
+  const dateRange = (e.endDateISO && e.endDateISO !== e.dateISO) ? `${e.dateLabel || e.date} – ${e.endDate || e.endDateISO}` : (e.dateLabel || e.date);
+  const when = [dateRange, e.when].filter(Boolean).join(' · ');
   const place = e.visibility === 'area' && !admin ? e.loc : [e.venue, e.loc].filter(Boolean).join(' · ');
   return `
     <main class="wrap">
-      <a class="back" href="#/explore">← Back to Discover</a>
+      <a class="back" href="#" data-a="goBack">← Back to Discover</a>
       <div class="dt">
         <div>
           <article class="card ev big">
@@ -35,7 +36,6 @@ function eventPage(id) {
           </article>
           <div class="row sp" style="margin-top:24px">
             <div><h2 style="margin:0">Plans &amp; Groups for this Event</h2><p class="mut">Join a smaller meetup or create one around this occasion.</p></div>
-            <button class="btn pink" data-a="evPlan" data-v="${e.id}">${I('plus')} Create a Plan</button>
           </div>
           ${plans.length ? `<div class="grid">${plans.map(card).join('')}</div>` : empty('No Plans yet','Start a smaller meetup around this Event.','Create a Plan','#/create')}
         </div>

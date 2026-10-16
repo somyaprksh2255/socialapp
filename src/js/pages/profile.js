@@ -1,3 +1,26 @@
+function blockedUsersSummary() {
+    const count = Array.isArray(S.blocked) ? S.blocked.length : 0;
+    return `<button type="button" class="blocked-users-trigger" data-a="blockedList" aria-label="View ${count} blocked users">
+        <span class="blocked-users-trigger__copy"><b>Blocked users</b><small>${count === 1 ? '1 person blocked' : `${count} people blocked`}</small></span>
+        <span class="blocked-users-trigger__count">${count}</span>
+        <span class="blocked-users-trigger__chevron">${I('chevron-right', '1.1em')}</span>
+    </button>`;
+}
+
+function blockedUsersOverlay() {
+    const ids = Array.isArray(S.blocked) ? S.blocked : [];
+    return `<div class="blocked-users-dialog">
+        <div class="row sp" style="align-items:flex-start"><div><p class="location-picker__eyebrow">PRIVACY & SAFETY</p><h2 style="margin:0 0 5px">Blocked users</h2><p class="mut" style="margin:0">${ids.length} ${ids.length === 1 ? 'person' : 'people'} won't appear in your discovery feed.</p></div><button class="iconbtn" data-a="close" aria-label="Close blocked users">${I('x')}</button></div>
+        ${ids.length ? `<div class="blocked-users-dialog__list">${ids.map(id => {
+            const u = usr(id) || {};
+            const name = u.name || 'Blocked user';
+            const detail = [u.username ? '@' + u.username : '', u.city || '', (u.interests || []).slice(0, 3).join(' · ')].filter(Boolean).map(esc).join(' · ');
+            return `<article class="blocked-user-detail">${av(id, 48)}<div class="blocked-user-detail__copy"><b>${esc(name)}</b><small>${detail || 'This person is blocked from your Squado experience.'}</small><small class="blocked-user-detail__id">${esc(String(id).slice(0, 8))}${String(id).length > 8 ? '…' : ''}</small></div><button class="btn sm ghost" data-a="unblock" data-v="${esc(id)}">Unblock</button></article>`;
+        }).join('')}</div>` : `<div class="blocked-users-empty-state"><span>${I('shield-check', '2em')}</span><b>No blocked users</b><p class="mut">People you block will appear here, and you can unblock them anytime.</p></div>`}
+        <p class="mut" style="font-size:.78rem;margin:14px 0 0">Unblocking lets this person appear in discovery again. It doesn't automatically rejoin either of you to a plan.</p>
+    </div>`;
+}
+
 function profile() {
     const m = S.me;
     const r = relOf(m);
@@ -170,14 +193,7 @@ function profile() {
                 </button>
 
                 <div style="margin-top:14px">
-                    <b style="font-size:.9rem">Blocked</b>
-                    ${
-                        S.blocked.length
-                            ? '<div style="margin-top:8px">' + S.blocked.map(b =>
-                                `<div class="li">${av(b, 30)}<b style="flex:1">${esc(usr(b).name)}</b><button class="btn sm ghost" data-a="unblock" data-v="${b}">Unblock</button></div>`
-                              ).join('') + '</div>'
-                            : '<p class="mut" style="margin:6px 0 0;font-size:.9rem">Nobody blocked.</p>'
-                    }
+                    ${blockedUsersSummary()}
                 </div>
 
             </div>

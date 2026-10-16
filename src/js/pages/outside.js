@@ -108,7 +108,7 @@ function outside() {
               <div class="two">
                 <!-- LEFT (sticky on desktop): heading + area selector -->
                 <div>
-                    <a class="back" href="#/home">
+                    <a class="back" href="#" data-a="goBack">
                         ← Back
                     </a>
 
@@ -261,7 +261,7 @@ function outside() {
        two-column .two layout like Home/Discover; forms stay single-column. */
     return `
         <main style="max-width:680px">
-            <a class="back" href="#/home">
+            <a class="back" href="#" data-a="goBack">
                 ← Back
             </a>
             ${b}

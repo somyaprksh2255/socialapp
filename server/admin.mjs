@@ -21,9 +21,14 @@ async function audit(req,action,targetType,targetId,reason='',metadata={}){
 }
 function eventPayload(raw,status){
   if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
-  const p={};for(const k of ['title','category','info','dateISO','startTime','endTime','loc','venue','host','ageGroup','visibility'])p[k]=typeof raw[k]==='string'?raw[k].trim().slice(0,k==='info'?1200:180):'';
+  const p={};for(const k of ['title','category','info','dateISO','startTime','endTime','loc','venue','host','ageGroup','visibility','city','state','locationSource'])p[k]=typeof raw[k]==='string'?raw[k].trim().slice(0,k==='info'?1200:180):'';
+  p.locLat=raw.locLat===''||raw.locLat==null?NaN:Number(raw.locLat);
+  p.locLng=raw.locLng===''||raw.locLng==null?NaN:Number(raw.locLng);
   p.capacity=raw.capacity===''||raw.capacity==null?null:Number(raw.capacity);p.status=status;
   if(!p.title||!p.category||!p.info||!p.dateISO||!p.startTime||!p.endTime||!p.loc||!p.venue||!p.host)return null;
+  /* The browser's hidden fields are not trusted: only a current, selected OSM
+     result with a real Indian city and valid coordinates can be persisted. */
+  if(p.locationSource!=='openstreetmap-nominatim'||!p.city||!Number.isFinite(p.locLat)||p.locLat < -90||p.locLat > 90||!Number.isFinite(p.locLng)||p.locLng < -180||p.locLng > 180)return null;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(p.dateISO)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(p.startTime)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(p.endTime))return null;
   if(status==='published'&&p.dateISO<new Date().toISOString().slice(0,10))return null;
   if(status==='published'&&p.endTime<=p.startTime)return null;

@@ -44,13 +44,77 @@ body { background: var(--bg); color: var(--ink); }
 .admin-notice { border:2px solid var(--ink); border-radius:15px; padding:12px 15px; margin:14px 0; background:#eee8ff; color:#24184c; box-shadow:3px 3px 0 var(--ink); }
 .admin-notice.error { background:#ffe1e8; color:#721b39; }
 .hidden { display:none !important; }
-@media (max-width:640px) { .admin-shell { padding-top:14px; } .admin-top { margin-bottom:20px; } .admin-heading-row { align-items:flex-start; } .admin-tabs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); } .admin-tab { padding:10px 8px; font-size:.82rem; } .admin-view .card, .admin-view .panel { padding:15px; } }
+@media (max-width:640px) { .admin-shell { padding-top:14px; } .admin-top { margin-bottom:20px; } .admin-heading-row { align-items:flex-start; } .admin-tabs { display:grid; grid-template-columns:minmax(0,1fr); width:100%; } .admin-tab { padding:14px 12px; min-height:46px; font-size:.9rem; text-align:left; } .admin-view .card, .admin-view .panel { padding:15px; } }
 
-.admin-location-search{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.admin-location-search input{flex:1;min-width:220px}
-.admin-location-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
-.admin-location-result{display:flex;flex-direction:column;gap:5px;text-align:left;padding:12px;border:2px solid var(--ink);border-radius:14px;background:var(--card);color:var(--ink);font:inherit;cursor:pointer;overflow-wrap:anywhere}
-.admin-location-result small{color:var(--muted);font-size:.78rem}
-.admin-location-result span{color:var(--pink);font-weight:700;font-size:.82rem}
-.admin-location-selected{padding:10px 12px;border:1px solid var(--line);border-radius:12px;font-size:.85rem}
-@media(max-width:600px){.admin-location-results{grid-template-columns:1fr}}
+/* Event location picker follows the shared Squado design tokens used by the rest of Admin. */
+.admin-view .admin-location-search{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.admin-view .admin-location-search input{flex:1;min-width:min(220px,100%)}
+.admin-view .admin-location-search .btn{flex:0 0 auto}
+.admin-view .admin-location-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px}
+.admin-view .admin-location-result{display:flex;flex-direction:column;align-items:flex-start;gap:5px;text-align:left;padding:13px;border:2px solid var(--ink);border-radius:16px;background:var(--card);color:var(--ink);font:inherit;cursor:pointer;overflow-wrap:anywhere;box-shadow:2px 2px 0 var(--ink);transition:transform .15s ease,border-color .15s ease}
+.admin-view .admin-location-result:hover{border-color:var(--pur);transform:translateY(-1px)}
+.admin-view .admin-location-result:focus-visible{outline:3px solid var(--pur);outline-offset:3px}
+.admin-view .admin-location-result small{color:var(--mut);font-size:.78rem;line-height:1.45}
+.admin-view .admin-location-result span{color:var(--pur);font-weight:700;font-size:.82rem}
+.admin-view .admin-location-selected{padding:12px 14px;margin:10px 0 0;border:2px solid var(--admin-line);border-radius:14px;background:var(--bg);color:var(--ink);font-size:.85rem;line-height:1.5;overflow-wrap:anywhere}
+.admin-view .admin-location-help{color:var(--mut);font-size:.85rem;line-height:1.55;margin:8px 0}
+@media(max-width:600px){.admin-view .admin-location-results{grid-template-columns:1fr}.admin-view .admin-location-search input{min-width:100%}.admin-view .admin-location-search .btn{width:100%}}
+
+/* Event Manager: prevent card/shadow collisions and apply Squado's playful token palette. */
+.admin-view .event-manager-grid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  align-items:stretch;
+  column-gap:22px;
+  row-gap:24px;
+  margin:18px 0 10px;
+  padding:0 6px 6px 0;
+  min-width:0;
+}
+.admin-view .event-manager-grid > * {
+  box-sizing:border-box;
+  min-width:0;
+  width:100%;
+  margin:0;
+  align-self:stretch;
+}
+.admin-view .event-manager-grid > article.card {
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  height:100%;
+  border:2px solid var(--ink);
+  border-radius:20px;
+  padding:clamp(16px,2vw,22px);
+  background:var(--card);
+  box-shadow:5px 5px 0 var(--pur);
+  overflow-wrap:anywhere;
+}
+.admin-view .event-manager-grid > article.card:hover {
+  transform:translateY(-2px);
+  box-shadow:6px 6px 0 var(--pur);
+}
+.admin-view .event-manager-grid > article.card .row { align-items:flex-start; }
+.admin-view .event-manager-grid > article.card .row h3 { flex:1 1 180px; overflow-wrap:anywhere; }
+.admin-view .event-manager-grid > article.card p { margin:0; line-height:1.55; }
+.admin-view .event-manager-grid > article.card .actions { margin-top:auto; padding-top:8px; }
+.admin-view .event-manager-grid > .event-manager-create {
+  grid-column:1;
+  min-height:190px;
+  height:100%;
+  box-sizing:border-box;
+  border:2px dashed var(--pur);
+  border-radius:20px;
+  padding:clamp(18px,2vw,24px);
+  background:var(--card);
+  box-shadow:5px 5px 0 var(--lime);
+  gap:12px;
+}
+.admin-view .event-manager-grid > .event-manager-create p { margin:0; line-height:1.5; }
+.admin-view .event-manager-grid > .event-manager-create .btn { align-self:center; }
+.admin-view .event-manager-grid .pill { white-space:nowrap; }
+@media (max-width:640px) {
+  .admin-view .event-manager-grid { grid-template-columns:minmax(0,1fr); row-gap:20px; column-gap:0; padding-right:6px; }
+  .admin-view .event-manager-grid > .event-manager-create { grid-column:1; min-height:145px; }
+  .admin-view .event-manager-grid > article.card { padding:16px; }
+}

@@ -94,8 +94,10 @@ function buildPage(r, a, b) {
 
         h = p && isAdmin(p) ? posted(a) : fallbackPage('denied');
     }
-    else if (k == 'event')
+    else if (k == 'event') {
         h = eventPage(a);
+        n = true; // Keep global navigation available on desktop Event pages; mobile hides it via CSS.
+    }
     else if (k == 'plan')
         h = detail(a);
     else if (k == 'checkin')
@@ -170,6 +172,7 @@ function render() {
 
     try {
         document.body.classList && document.body.classList.toggle('in-chat', k == 'gc');
+        document.body.classList && document.body.classList.toggle('in-event', k == 'event');
     }
     catch (e) { }
 

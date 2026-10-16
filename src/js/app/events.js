@@ -3,6 +3,7 @@ document.addEventListener('click', e => {
     if (!b)
         return;
     const a = b.dataset.a;
+    if (a === 'goBack' && b.tagName === 'A') e.preventDefault();
     if (a == 'close' && b.tagName == 'A') {
         modal('');
         return;

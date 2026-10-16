@@ -1,7 +1,7 @@
 function settings() {
     return `
         <main style="max-width:600px">
-            <a class="back" href="#/me">
+            <a class="back" href="#" data-a="goBack">
                 ← Back
             </a>
 
@@ -39,19 +39,10 @@ function settings() {
                 🌗 Switch theme
             </button>
 
-            <h2>Blocked</h2>
+            <h2>Privacy &amp; safety</h2>
 
-            ${
-                S.blocked.length
-                    ? S.blocked
-                          .map(
-                              b =>
-                                  `<div class="li">${av(b, 30)}<b style="flex:1">${esc(usr(b).name)}</b><button class="btn sm ghost" data-a="unblock" data-v="${b}">Unblock</button></div>`
-                          )
-                          .join('')
-                    : '<p class="mut">Nobody blocked.</p>'
-            }
-            
+            ${blockedUsersSummary()}
+
             <p style="margin-top:12px">
                 <button class="btn ghost" data-a="logout">
                     ${I('log-out')} Log out

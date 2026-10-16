@@ -104,7 +104,7 @@ function detail(id) {
 
   return `
     <main class="wrap">
-      <a class="back" href="#/explore">
+      <a class="back" href="#" data-a="goBack">
         ← Back
       </a>
 

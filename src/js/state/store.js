@@ -42,6 +42,8 @@ const FRESH = () => ({
     blocked: [],
     reports: [],
     feedback: [],
+    feedbackSummaries: {},
+    trustSummaries: {},
     fbLater: {},
     notif: true
 });
@@ -220,8 +222,9 @@ if (!S.unread)
 if (!S.blocked)
     S.blocked = [];
 
-if (!S.feedback)
-    S.feedback = [];
+if (!S.feedback) S.feedback = [];
+if (!S.feedbackSummaries) S.feedbackSummaries = {};
+if (!S.trustSummaries) S.trustSummaries = {};
 
 if (!S.fbLater)
     S.fbLater = {};
@@ -278,6 +281,7 @@ const O = {
         category: 'garba',
         info: '',
         date: '',
+        endDate: '',
         startTime: '',
         endTime: '',
         loc: '',

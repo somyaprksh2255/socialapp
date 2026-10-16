@@ -21,6 +21,9 @@ function explore() {
   }
 
   const q = (O.ui.q || "").trim().toLowerCase();
+  const publishedEvents = (Array.isArray(S.events) ? S.events : [])
+    .filter(e => e && e.status === 'published')
+    .filter(e => !q || `${e.title || ''} ${e.loc || ''} ${e.venue || ''} ${e.info || ''}`.toLowerCase().includes(q));
 
   if (q) {
     L = L.filter((p) =>
@@ -151,47 +154,24 @@ function explore() {
           ? loader("Finding the squad...")
           : f == "Events"
             ? `
-              <div
-                class="grid"
-                style="margin-top:16px"
-              >
-                ${
-                  S.events
-                    .filter(e => e.status === 'published')
-                    .filter(
-                      (e) =>
-                        !q ||
-                        (
-                          e.title +
-                          " " +
-                          e.loc
-                        )
-                          .toLowerCase()
-                          .includes(q),
-                    )
-                    .map(evCard)
-                    .join("") ||
-                  empty(
-                    "No events match.",
-                    "Try another search.",
-                    "Clear search",
-                    "#/explore",
-                  )
-                }
+              <div class="grid" style="margin-top:16px">
+                ${publishedEvents.map(evCard).join("") || empty("No events match.", "Try another search.", "Clear search", "#/explore")}
               </div>
             `
-            : L.length
-              ? `
-                <div class="grid">
-                  ${L.map(card).join("")}
-                </div>
-              `
-              : empty(
-                  "Nothing nearby.",
-                  "Wanna start something?",
-                  "Make a plan",
-                  "#/create",
-                )
+            : `
+              ${f === "All" && publishedEvents.length ? `
+                <section class="discover-events" aria-labelledby="discover-events-heading" style="margin-top:16px">
+                  <h2 id="discover-events-heading">Upcoming events</h2>
+                  <div class="grid">${publishedEvents.map(evCard).join("")}</div>
+                </section>
+              ` : ""}
+              ${L.length ? `
+                <section class="discover-plans" style="margin-top:${f === "All" && publishedEvents.length ? "24px" : "16px"}">
+                  ${f === "All" && publishedEvents.length ? '<h2>Plans &amp; meetups</h2>' : ""}
+                  <div class="grid">${L.map(card).join("")}</div>
+                </section>
+              ` : (f === "All" && publishedEvents.length ? "" : empty("Nothing nearby.", "Wanna start something?", "Make a plan", "#/create"))}
+            `
       }
     </main>
   `;

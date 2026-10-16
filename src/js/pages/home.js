@@ -291,10 +291,21 @@ function home() {
                     : ""
                 }
 
-                <h2>Events tonight</h2>
+                <h2>Upcoming events near you</h2>
 
                 <div class="grid">
-                  ${S.events.filter(e => e.status === 'published' && isCity(e.city) && (!viewCity() || e.city === viewCity()) && (!geoOn() || (d(e) != null && d(e) <= 40))).slice(0, 2).map(evCard).join("") || empty('No Events published yet','Check back when Squado announces an event.','Explore plans','#/explore')}
+                  ${(() => {
+                    const normCity = value => String(value || '').trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+                    const selectedCity = normCity(viewCity());
+                    const publishedEvents = (Array.isArray(S.events) ? S.events : [])
+                      .filter(e => e && e.status === 'published')
+                      .filter(e => {
+                        const eventCity = normCity(e.city || e.locCity || cityOfLoc(e.loc));
+                        return !selectedCity || !eventCity || eventCity === selectedCity;
+                      })
+                      .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+                    return publishedEvents.slice(0, 3).map(evCard).join('') || empty('No upcoming events yet', 'Published Squado events will appear here.', 'Explore plans', '#/explore');
+                  })()}
                 </div>
 
                 <h2>Picked for you</h2>

@@ -116,7 +116,7 @@ function attPanel(p) {
 
 function checkinPage(id, token) {
     const p = pl(id);
-    const back = '<a class="back" href="#/home">← Home</a>';
+    const back = '<a class="back" href="#" data-a="goBack">← Home</a>';
     const done = O.ci && O.ci.id == id && O.ci.res;
     let body;
 
