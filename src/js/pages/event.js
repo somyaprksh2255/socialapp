@@ -1,10 +1,12 @@
 /* Events are organized occasions. Attendance is never tracked at Event level; check-in belongs to Plans/Groups. */
 function eventPage(id) {
   if (!idOk(id)) return fallbackPage('invalid');
-  const e = S.events.find(x => x.id == id && (x.status === 'published' || canManageEvents()));
+  if (tier() === 'guest') return fallbackPage('event');
+  const e = visibleEvents().find(x => x.id == id);
   if (!e || e.status === 'cancelled') return fallbackPage('event');
   const admin = canManageEvents();
-  const plans = S.plans.filter(p => p.event === id && p.status === 'open' && !S.blocked.includes(p.creator));
+  /* Use the same city/visibility gate as Explore, then keep only plans linked to this Event. */
+  const plans = vis().filter(p => p.event === id);
   const dateRange = (e.endDateISO && e.endDateISO !== e.dateISO) ? `${e.dateLabel || e.date} – ${e.endDate || e.endDateISO}` : (e.dateLabel || e.date);
   const when = [dateRange, e.when].filter(Boolean).join(' · ');
   const place = e.visibility === 'area' && !admin ? e.loc : [e.venue, e.loc].filter(Boolean).join(' · ');
