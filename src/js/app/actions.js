@@ -278,7 +278,7 @@ const A = {
             return toast('This plan is no longer available.');
         if ((p.who == 'Girls only' && g != 'Girl') || (p.who == 'Boys only' && g != 'Boy'))
             return toast('This one\'s ' + p.who.toLowerCase() + ' 🫶');
-        modal(`\<h2 style="margin-top:0">Ask to join the squad 👀\</h2>\<p>\<b>${esc(p.title)}\</b>\<br>\<span class="mut">${esc(p.loc)} · ${p.live ? 'Live now' : p.when} · ${p.members.length} / ${p.max} people${p.who != 'Everyone' ? ' · ' + p.who : ''}\</span>\</p>\<p class="mut">${esc(usr(p.creator).name)} checks your profile, then accepts or passes.\</p>\<button class="btn pink wide" data-a="cjoin" data-v="${p.id}">Send request\</button>\<p style="text-align:center">\<button class="btn ghost sm" data-a="close">Nvm\</button>\</p>`);
+        modal(`\<h2 style="margin-top:0">Ask to join the squad 👀\</h2>\<p>\<b>${esc(p.title)}\</b>\<br>\<span class="mut">${esc(p.loc)} · ${p.live ? 'Live now' : p.when} · ${(Number.isFinite(p.memberCount) ? p.memberCount : p.members.length)} / ${p.max} people${p.who != 'Everyone' ? ' · ' + p.who : ''}\</span>\</p>\<p class="mut">${esc(usr(p.creator).name)} checks your profile, then accepts or passes.\</p>\<button class="btn pink wide" data-a="cjoin" data-v="${p.id}">Send request\</button>\<p style="text-align:center">\<button class="btn ghost sm" data-a="close">Nvm\</button>\</p>`);
     },
     cjoin(e) {
         const p = pl(e.dataset.v);
@@ -359,7 +359,7 @@ const A = {
             planId: p.id,
             userId: 'me'
         });
-        if (p.members.length >= p.max) {
+        if ((Number.isFinite(p.memberCount) ? p.memberCount : p.members.length) >= p.max) {
             sys(p.id, 'Squad full 🔥');
             confetti();
         }
