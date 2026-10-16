@@ -130,7 +130,7 @@ function authorize(name, e) {
         return 'unavailable';
 
     if (kind == 'event')
-        return S.events.some(x => x.id == id) ? 'ok' : 'unavailable';
+        return typeof visibleEvents === 'function' && visibleEvents().some(x => x.id == id) ? 'ok' : 'unavailable';
 
     if (kind == 'person')
         return id != 'me' && S.users.some(u => u.id == id) ? 'ok' : 'unavailable';
