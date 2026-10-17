@@ -23,6 +23,7 @@ function explore() {
   const q = (O.ui.q || "").trim().toLowerCase();
   const publishedEvents = (Array.isArray(S.events) ? S.events : [])
     .filter(e => e && e.status === 'published')
+    .filter(eventVisibleInCurrentCity)
     .filter(e => !q || `${e.title || ''} ${e.loc || ''} ${e.venue || ''} ${e.info || ''}`.toLowerCase().includes(q));
 
   if (q) {
