@@ -28,6 +28,11 @@ assert(finish.includes('await syncSupabaseProfile()'), 'Completing onboarding mu
 assert(finish.includes('refreshSharedNotifications'), 'Onboarding completion must refresh the durable inbox');
 
 assert(supabase.includes("reqs: reqRows.map(r => ({ u: r.user_id === uid ? 'me' : r.user_id, at: r.at }))"), 'Pending requests must map the current requester UUID to local identity');
+assert(actions.includes("client.rpc('request_shared_plan_join', { p_plan_id: p.id })"), 'Published shared plans must persist join requests through the Supabase RPC');
+assert(actions.includes("client.rpc('cancel_shared_plan_join', { p_plan_id: p.id })"), 'Cancelling a shared-plan request must use the Supabase RPC');
+assert(actions.includes("client.rpc('decide_shared_plan_join', { p_plan_id: p.id, p_user_id: u, p_approve: true })"), 'Host approval must update the shared database');
+assert(actions.includes("client.rpc('decide_shared_plan_join', { p_plan_id: p.id, p_user_id: u, p_approve: false })"), 'Host rejection must update the shared database');
+assert(actions.includes("if (p._shared && typeof getSupabaseClient === 'function')"), 'Server-owned shared plans must not silently fall back to local-only request state');
 assert(supabase.includes('const requesterIds = requests.filter(r => r.state === \'pending\')'), 'Host feed must load profiles for pending requesters');
 assert(supabase.includes("from('squado_notifications')"), 'Shared notifications must be read from the server');
 assert(supabase.includes('async function markSharedNotificationsRead'), 'Notification read state must be persisted server-side');
