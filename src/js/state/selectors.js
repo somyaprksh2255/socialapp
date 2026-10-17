@@ -14,6 +14,15 @@ const pl = id =>
 const viewCity = () =>
     isCity(S.discoveryCity) ? S.discoveryCity : (isCity(S.me.city) ? S.me.city : null);
 
+/* Events are city-scoped. Unknown/missing city is never treated as a match for every feed. */
+const cityKey = value => String(value || '').trim().toLocaleLowerCase().replace(/\\s+/g, ' ');
+const eventCity = e => e && (e.city || e.locCity || cityOfLoc(e.loc));
+const eventVisibleInCurrentCity = e => {
+    const selected = cityKey(viewCity());
+    const actual = cityKey(eventCity(e));
+    return !!selected && !!actual && selected === actual;
+};
+
 const planCity = p =>
     p.city || cityOfLoc(p.loc);
 
