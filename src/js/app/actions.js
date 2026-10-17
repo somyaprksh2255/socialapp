@@ -286,18 +286,17 @@ const A = {
         if (c != 'ok') {
             modal('');
             if (c === 'auth') {
-                rememberIntent('join', p && p.id);
-                return goHash('#/login');
+                if (typeof window.requireAuth === 'function') return window.requireAuth({ a: 'join', v: p && p.id }, null, 'Join a squad');
+                return toast('Sign in to request to join this squad.');
             }
             if (c === 'onboarding') {
-                rememberIntent('join', p && p.id);
-                return goHash('#/signup');
+                return toast('Finish setting up your profile before requesting to join.');
             }
             if (c === 'member') return toast('You are already in this squad.');
             return toast(JOIN_MSG[c] ? JOIN_MSG[c](p) : 'This plan is no longer available.');
         }
         if (!p) { modal(''); return toast('This plan is no longer available.'); }
-        if (p.demo) { modal(''); rememberIntent('join', p.id); return goHash('#/login'); }
+        if (p.demo) { modal(''); if (typeof window.requireAuth === 'function') return window.requireAuth({ a: 'join', v: p.id }, null, 'Join a squad'); return toast('Sign in to discover real plans.'); }
 
         /* Published shared plans must use the database transaction; local-only state is not a request. */
         if (p._shared && typeof getSupabaseClient === 'function') {
