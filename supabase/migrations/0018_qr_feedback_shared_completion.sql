@@ -3,6 +3,33 @@
 
 begin;
 
+create extension if not exists pgcrypto;
+
+-- The existing live deployment may have the shared-plan schema without the later
+-- attendance/feedback artifacts. Create their established base shape when absent.
+create table if not exists public.attendance (
+    id uuid primary key default gen_random_uuid(),
+    plan_id text not null references public.plans(id) on delete cascade,
+    uid uuid not null references public.profiles(auth_uid) on delete cascade,
+    audit jsonb not null default '[]'::jsonb,
+    dispute jsonb,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (plan_id, uid)
+);
+
+create table if not exists public.feedback (
+    id uuid primary key default gen_random_uuid(),
+    plan_id text not null references public.plans(id) on delete cascade,
+    by uuid not null references public.profiles(auth_uid) on delete cascade,
+    to_uid uuid references public.profiles(auth_uid) on delete set null,
+    rating int,
+    notes text,
+    created_at timestamptz not null default now()
+);
+
+alter table public.plans add column if not exists completion jsonb;
+
 -- Keep the host-scanner API compatible even if the earlier review-only 0003 artifact
 -- was not applied. These statements are safe to re-run.
 alter table public.attendance add column if not exists status text not null default 'present';
