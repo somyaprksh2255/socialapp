@@ -286,7 +286,7 @@ const A = {
         if (c != 'ok') {
             modal('');
             if (c === 'auth') {
-                if (typeof window.requireAuth === 'function') return window.requireAuth({ a: 'join', v: p && p.id }, null, 'Join a squad');
+                if (typeof window.requireAuth === 'function') return window.requireAuth({ a: '', hash: '#/explore' }, null, 'Sign in to explore');
                 return toast('Sign in to request to join this squad.');
             }
             if (c === 'onboarding') {
@@ -296,7 +296,7 @@ const A = {
             return toast(JOIN_MSG[c] ? JOIN_MSG[c](p) : 'This plan is no longer available.');
         }
         if (!p) { modal(''); return toast('This plan is no longer available.'); }
-        if (p.demo) { modal(''); if (typeof window.requireAuth === 'function') return window.requireAuth({ a: 'join', v: p.id }, null, 'Join a squad'); return toast('Sign in to discover real plans.'); }
+        if (p.demo) { modal(''); if (typeof window.requireAuth === 'function') return window.requireAuth({ a: '', hash: '#/explore' }, null, 'Sign in to explore'); return toast('Sign in to discover real plans.'); }
 
         /* Published shared plans must use the database transaction; local-only state is not a request. */
         if (p._shared && typeof getSupabaseClient === 'function') {
