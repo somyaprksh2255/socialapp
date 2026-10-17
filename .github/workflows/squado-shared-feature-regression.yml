@@ -1,0 +1,32 @@
+name: Squado shared feature regression checks
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full regression suite
+        run: npm test
+
+      - name: Test account restoration and shared join notifications
+        run: node tests/auth-restore-join-notifications.test.mjs

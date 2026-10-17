@@ -40,8 +40,8 @@ export async function recordCheckIn({ hostUid, planId, scannedUid }) {
      * not a check — it may be '' when the profile row is unseeded. */
     const { data: profile, error: profileErr } = await client
         .from('profiles')
-        .select('auth_uid, name')
-        .eq('auth_uid', scannedUid)
+        .select('id, name')
+        .eq('id', scannedUid)
         .maybeSingle();
     if (profileErr) throw new Error('profile_lookup_failed');
     if (!profile) return { ok: false, reason: 'unknown' };

@@ -295,14 +295,9 @@ function home() {
 
                 <div class="grid">
                   ${(() => {
-                    const normCity = value => String(value || '').trim().toLocaleLowerCase().replace(/\s+/g, ' ');
-                    const selectedCity = normCity(viewCity());
                     const publishedEvents = (Array.isArray(S.events) ? S.events : [])
                       .filter(e => e && e.status === 'published')
-                      .filter(e => {
-                        const eventCity = normCity(e.city || e.locCity || cityOfLoc(e.loc));
-                        return !selectedCity || !eventCity || eventCity === selectedCity;
-                      })
+                      .filter(eventVisibleInCurrentCity)
                       .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
                     return publishedEvents.slice(0, 3).map(evCard).join('') || empty('No upcoming events yet', 'Published Squado events will appear here.', 'Explore plans', '#/explore');
                   })()}

@@ -439,6 +439,10 @@ async function publishSharedPlan(plan) {
 
 function sharedPlanFromRow(row, uid, memberships, requests) {
     const own = row.creator === uid;
+    const completionRow = row.completion && typeof row.completion === 'object' ? {
+        ...row.completion,
+        by: row.completion.by === uid ? 'me' : row.completion.by
+    } : null;
     const memberRows = memberships.filter(m => m.plan_id === row.id && m.state === 'member');
     const reqRows = requests.filter(r => r.plan_id === row.id && r.state === 'pending');
     const members = memberRows.map(m => m.user_id === uid ? 'me' : m.user_id);
@@ -452,7 +456,9 @@ function sharedPlanFromRow(row, uid, memberships, requests) {
         locSource: row.loc_source || '', locPlace: row.loc_place || '', city: row.city || '',
         when: row.live ? 'LIVE NOW' : (row.when_at || ''), live: !!row.live, max: Number(row.max || row.size || 2),
         members, who: row.who || 'Everyone', reqs: reqRows.map(r => ({ u: r.user_id === uid ? 'me' : r.user_id, at: r.at })),
-        status: row.status || 'open', day: row.day || 'Today', auto: !!row.auto,
+        status: row.status === 'closed' ? (completionRow ? 'ended' : 'closed') : 'open',
+        completion: completionRow,
+        day: row.day || 'Today', auto: !!row.auto,
         event: row.event_id || null, spot: row.spot || '', created: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
         _shared: true, _supabaseCreatorUid: row.creator
     };
@@ -479,7 +485,7 @@ async function refreshSharedPlans(options = {}) {
         /* Feed query deliberately excludes exact spot and coordinates. RLS is row-level,
            not column-level, so selecting '*' here would expose private meetup details to
            every authenticated user who can discover a plan. */
-        const publicPlanColumns = 'id,creator,type,title,descr,vibe,loc,dist,when_at,live,size,who,status,max,auto,city,day,event_id,created_at,updated_at';
+        const publicPlanColumns = 'id,creator,type,title,descr,vibe,loc,dist,when_at,live,size,who,status,max,auto,city,day,event_id,completion,created_at,updated_at';
         const plansResult = await client.from('plans').select(publicPlanColumns).eq('status', 'open').order('created_at', { ascending: false }).limit(300);
         if (plansResult.error) throw sharedPlanError('plan_feed_load_failed', plansResult.error);
         const [membersResult, requestsResult, countsResult] = await Promise.all([
@@ -490,7 +496,25 @@ async function refreshSharedPlans(options = {}) {
         if (membersResult.error) throw sharedPlanError('plan_memberships_load_failed', membersResult.error);
         if (requestsResult.error) throw sharedPlanError('plan_requests_load_failed', requestsResult.error);
         if (countsResult.error) throw sharedPlanError('plan_member_counts_load_failed', countsResult.error);
-        const rows = plansResult.data || [], memberships = membersResult.data || [], requests = requestsResult.data || [];
+        const memberships = membersResult.data || [], requests = requestsResult.data || [];
+        /* Also load closed plans for accepted members/hosts so attendance and feedback remain
+           available after a meetup ends. Closed plans never enter public discovery. */
+        const ownMembershipPlanIds = [...new Set(memberships
+            .filter(m => m.user_id === user.id && m.state === 'member')
+            .map(m => m.plan_id)
+            .filter(Boolean))];
+        let closedRows = [];
+        if (ownMembershipPlanIds.length) {
+            const closedResult = await client.from('plans')
+                .select(publicPlanColumns)
+                .eq('status', 'closed')
+                .in('id', ownMembershipPlanIds)
+                .order('updated_at', { ascending: false })
+                .limit(300);
+            if (closedResult.error) throw sharedPlanError('plan_history_load_failed', closedResult.error);
+            closedRows = closedResult.data || [];
+        }
+        const rows = [...new Map([...(plansResult.data || []), ...closedRows].map(row => [row.id, row])).values()];
         const countByPlan = new Map((countsResult.data || []).map(x => [x.plan_id, Number(x.member_count || 0)]));
         /* Private location details are fetched only for plans the signed-in user hosts
            or belongs to. The membership SELECT policy permits the user to see their own
@@ -517,7 +541,8 @@ async function refreshSharedPlans(options = {}) {
 
         const creatorIds = rows.map(r => r.creator).filter(id => id && id !== user.id);
         const requesterIds = requests.filter(r => r.state === 'pending').map(r => r.user_id).filter(id => id && id !== user.id);
-        const profileIdsToLoad = [...new Set([...creatorIds, ...requesterIds])];
+        const memberIds = memberships.filter(m => m.state === 'member').map(m => m.user_id).filter(id => id && id !== user.id);
+        const profileIdsToLoad = [...new Set([...creatorIds, ...requesterIds, ...memberIds])];
         if (profileIdsToLoad.length) {
             const profilesResult = await client.from('profiles')
                 .select('id,username,name,email,gender,city,age_range,bio,photo_url,interests,onboarded,rel')
@@ -532,6 +557,7 @@ async function refreshSharedPlans(options = {}) {
             }));
             /* RLS can hide a profile that is unrelated to the current plan; safe fallback remains available. */
         }
+        if (typeof refreshSharedAttendance === 'function') { try { await refreshSharedAttendance({ render: false }); } catch (e) { console.warn('[attendance] shared refresh failed:', e && e.code || e); } }
         if (typeof refreshSharedFeedbackSummaries === 'function') { try { await refreshSharedFeedbackSummaries(); } catch (e) { console.warn('[feedback] aggregate refresh failed:', e && e.code || e); } }
         if (typeof save === 'function') save();
         if (options.render !== false && typeof render === 'function') render();
@@ -544,6 +570,294 @@ async function refreshSharedPlans(options = {}) {
 
 
 
+
+/* Shared group chat: the database is authoritative for cross-account messages.
+   The messages/message_reactions tables are protected by the migration's accepted-member RLS policies. */
+const sharedChatRefreshes = new Map();
+
+function chatTimeLabel(value) {
+    const d = value ? new Date(value) : new Date();
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function sharedChatMessageFromRow(row, uid, cached) {
+    const kind = row.kind || 'text';
+    const m = {
+        _remoteId: row.id,
+        _shared: true,
+        by: row.by === uid ? 'me' : row.by,
+        x: row.text || '',
+        t: chatTimeLabel(row.created_at),
+        mpath: row.media_path || '',
+        loc: row.loc || null,
+        r: '',
+        _myReaction: ''
+    };
+    if (kind === 'sys') m.sys = 1;
+    else if (kind !== 'text') m.type = kind;
+    if (cached && cached.mpath === m.mpath && cached.src) m.src = cached.src;
+    return m;
+}
+
+async function publishSharedChatMessage(planId, draft) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const plan = typeof pl === 'function' ? pl(planId) : null;
+    if (!plan || !plan._shared || typeof groupAccess !== 'function' || !groupAccess(plan))
+        throw sharedPlanError('chat_forbidden');
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id)
+        throw sharedPlanError('chat_authentication_required');
+    const kind = String(draft && draft.kind || 'text');
+    if (!['text', 'photo', 'location', 'photo-location'].includes(kind))
+        throw sharedPlanError('chat_invalid_message');
+    const body = {
+        plan_id: String(planId),
+        by: user.id,
+        kind,
+        text: String(draft && draft.text || '').slice(0, 300) || null,
+        media_path: String(draft && draft.mediaPath || '') || null,
+        loc: draft && draft.loc != null ? draft.loc : null
+    };
+    if (kind === 'text' && !String(body.text || '').trim())
+        throw sharedPlanError('chat_empty_message');
+    const result = await client.from('messages')
+        .insert(body)
+        .select('id,plan_id,by,kind,text,media_path,loc,created_at')
+        .single();
+    if (result.error || !result.data)
+        throw sharedPlanError('chat_message_send_failed', result.error);
+    return sharedChatMessageFromRow(result.data, user.id, null);
+}
+
+async function toggleSharedMessageReaction(messageId, currentEmoji) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const user = await currentSupabaseUser();
+    const reactions = ['🔥', '🕺', '😭', ''];
+    const next = reactions[(Math.max(-1, reactions.indexOf(currentEmoji)) + 1) % reactions.length];
+    if (!next) {
+        const removed = await client.from('message_reactions').delete()
+            .eq('message_id', messageId).eq('user_id', user.id);
+        if (removed.error) throw sharedPlanError('chat_reaction_save_failed', removed.error);
+    } else {
+        const saved = await client.from('message_reactions').upsert(
+            { message_id: messageId, user_id: user.id, emoji: next },
+            { onConflict: 'message_id,user_id' }
+        );
+        if (saved.error) throw sharedPlanError('chat_reaction_save_failed', saved.error);
+    }
+    return next;
+}
+
+async function refreshSharedChatMessages(planId, options = {}) {
+    const key = String(planId || '');
+    if (sharedChatRefreshes.has(key)) return sharedChatRefreshes.get(key);
+    const client = getSupabaseClient();
+    const plan = typeof pl === 'function' ? pl(key) : null;
+    if (!client || !plan || !plan._shared || typeof groupAccess !== 'function' || !groupAccess(plan))
+        return [];
+    const task = (async () => {
+        const user = await currentSupabaseUser();
+        if (!S.me || S.me.guest || S.me.sub !== user.id) return [];
+        const result = await client.from('messages')
+            .select('id,plan_id,by,kind,text,media_path,loc,created_at')
+            .eq('plan_id', key)
+            .order('created_at', { ascending: true })
+            .limit(500);
+        if (result.error) throw sharedPlanError('chat_load_failed', result.error);
+        const rows = result.data || [];
+        const old = Array.isArray(S.msgs[key]) ? S.msgs[key] : [];
+        const oldById = new Map(old.filter(m => m && m._remoteId).map(m => [m._remoteId, m]));
+        const signature = list => JSON.stringify((list || []).map(m => [m._remoteId || '', m.by || '', m.x || '', m.r || '', m.mpath || '']));
+        const oldSignature = signature(old);
+        const ids = rows.map(row => row.id).filter(Boolean);
+        let reactionRows = [];
+        if (ids.length) {
+            const reactions = await client.from('message_reactions')
+                .select('message_id,user_id,emoji')
+                .in('message_id', ids);
+            if (reactions.error) throw sharedPlanError('chat_reaction_load_failed', reactions.error);
+            reactionRows = reactions.data || [];
+        }
+        const byMessage = new Map();
+        reactionRows.forEach(r => {
+            if (!byMessage.has(r.message_id)) byMessage.set(r.message_id, []);
+            byMessage.get(r.message_id).push(r);
+        });
+        const mapped = [];
+        for (const row of rows) {
+            const m = sharedChatMessageFromRow(row, user.id, oldById.get(row.id));
+            const rs = byMessage.get(row.id) || [];
+            m.r = rs.map(x => x.emoji).join('');
+            m._myReaction = (rs.find(x => x.user_id === user.id) || {}).emoji || '';
+            if (m.mpath && !m.src && typeof signChatMedia === 'function') {
+                try { m.src = await signChatMedia(m.mpath); }
+                catch (_) { m.src = ''; }
+            }
+            mapped.push(m);
+        }
+        const current = await client.auth.getUser();
+        if (current.error || !current.data || !current.data.user ||
+            current.data.user.id !== user.id || !S.me || S.me.guest || S.me.sub !== user.id)
+            return mapped;
+        const changed = oldSignature !== signature(mapped);
+        S.msgs[key] = mapped;
+        if (typeof save === 'function') save();
+        if (changed && options.render !== false && location.hash === '#/gc/' + key && typeof render === 'function') {
+            const input = typeof document !== 'undefined' ? document.activeElement : null;
+            const keepComposer = input && input.id === 'mi';
+            const start = keepComposer && Number.isInteger(input.selectionStart) ? input.selectionStart : null;
+            const end = keepComposer && Number.isInteger(input.selectionEnd) ? input.selectionEnd : null;
+            render();
+            const replacement = keepComposer && typeof document !== 'undefined' ? document.getElementById('mi') : null;
+            if (replacement) {
+                replacement.focus();
+                if (start !== null && end !== null && typeof replacement.setSelectionRange === 'function') {
+                    try { replacement.setSelectionRange(start, end); } catch (_) { }
+                }
+            }
+            if (typeof scrollTo === 'function') scrollTo(0, 1e6);
+        }
+        return mapped;
+    })();
+    sharedChatRefreshes.set(key, task);
+    try { return await task; }
+    finally { if (sharedChatRefreshes.get(key) === task) sharedChatRefreshes.delete(key); }
+}
+
+/* Sync the host's completion to Supabase so the plan closes for all members and feedback
+   becomes eligible on every device. The server-side RPC also marks the host present atomically. */
+async function completeSharedPlanRemote(planId) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const plan = typeof pl === 'function' ? pl(planId) : null;
+    if (!plan || !plan._shared || plan.creator !== 'me')
+        throw sharedPlanError('plan_completion_forbidden');
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id)
+        throw sharedPlanError('authentication_required');
+    const result = await client.rpc('complete_shared_plan', { p_plan: String(planId) });
+    if (result.error || result.data !== true)
+        throw sharedPlanError('plan_completion_sync_failed', result.error);
+    return true;
+}
+
+/* Shared feedback keeps individual responses private. The database authorizes submissions
+   only for completed meetups with verified attendance; summaries are aggregate-only (3+ ratings). */
+async function submitSharedFeedback(plan, kind, payload, targetUid) {
+    if (!plan || !plan._shared) return true; // local/demo plans keep their local behavior
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    if (!['meetup', 'person'].includes(kind)) throw sharedPlanError('feedback_invalid_kind');
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id) throw sharedPlanError('authentication_required');
+    if (plan.status !== 'ended') throw sharedPlanError('ineligible');
+    const rating = Math.round(Number(payload && payload.rating));
+    if (!(rating >= 1 && rating <= 5)) throw sharedPlanError('feedback_invalid_rating');
+    const target = kind === 'person' ? String(targetUid || '') : '';
+    if (kind === 'person' && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target) || target === user.id))
+        throw sharedPlanError('feedback_invalid_target');
+    const duplicateQuery = client.from('feedback').select('id')
+        .eq('plan_id', plan.id).eq('by', user.id).eq('kind', kind);
+    if (kind === 'person') duplicateQuery.eq('to_uid', target);
+    else duplicateQuery.is('to_uid', null);
+    const prior = await duplicateQuery.limit(1);
+    if (prior.error) throw sharedPlanError('feedback_duplicate_check_failed', prior.error);
+    if ((prior.data || []).length) throw sharedPlanError('duplicate');
+    const row = {
+        plan_id: plan.id, by: user.id, to_uid: kind === 'person' ? target : null,
+        kind, rating, tags: [...new Set((payload && payload.tags || []).map(String).slice(0, 20))],
+        notes: String(payload && payload.comment || '').trim().slice(0, 500)
+    };
+    const result = await client.from('feedback').insert(row).select('id').single();
+    if (result.error) {
+        if (result.error.code === '23505') throw sharedPlanError('duplicate', result.error);
+        if (result.error.code === '42501') throw sharedPlanError('ineligible', result.error);
+        throw sharedPlanError('feedback_save_failed', result.error);
+    }
+    return true;
+}
+
+async function refreshSharedFeedbackSummaries() {
+    const client = getSupabaseClient();
+    if (!client) return [];
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id) return [];
+    const result = await client.rpc('shared_feedback_summaries');
+    if (result.error) throw sharedPlanError('feedback_summary_load_failed', result.error);
+    const current = await client.auth.getUser();
+    if (current.error || !current.data || !current.data.user || current.data.user.id !== user.id ||
+        !S.me || S.me.guest || S.me.sub !== user.id) return [];
+    const planSummaries = {};
+    const personSummaries = {};
+    (result.data || []).forEach(row => {
+        const n = Number(row.n || 0);
+        if (n < 3) return;
+        const tags = row.tags && typeof row.tags === 'object' ? row.tags : {};
+        if (row.kind === 'meetup' && row.plan_id) {
+            planSummaries[row.plan_id] = {
+                n, avg: row.avg == null ? null : Number(row.avg),
+                tags: Object.entries(tags).sort((a, b) => b[1] - a[1]).slice(0, 3)
+            };
+        } else if (row.kind === 'person' && row.target_uid) {
+            personSummaries[row.target_uid] = {
+                n, avg: row.avg == null ? null : Number(row.avg), tags
+            };
+        }
+    });
+    /* Clear stale shared summaries for the plans currently cached by this account. */
+    (S.plans || []).filter(p => p && p._shared).forEach(p => {
+        if (!Object.prototype.hasOwnProperty.call(planSummaries, p.id))
+            planSummaries[p.id] = null;
+    });
+    S.feedbackSummaries = { ...(S.feedbackSummaries || {}), ...planSummaries };
+    S.trustSummaries = personSummaries;
+    if (typeof save === 'function') save();
+    return result.data || [];
+}
+
+/* Attendance written by the protected server scanner must be read back on each attendee's device.
+   S.attendance is only a local UI cache; Supabase rows override cache entries with the same plan/member. */
+let sharedAttendanceRefresh = null;
+async function refreshSharedAttendance(options = {}) {
+    if (sharedAttendanceRefresh) return sharedAttendanceRefresh;
+    const client = getSupabaseClient();
+    if (!client) return [];
+    sharedAttendanceRefresh = (async () => {
+        const user = await currentSupabaseUser();
+        if (!S.me || S.me.guest || S.me.sub !== user.id) return [];
+        const planIds = [...new Set((S.plans || []).filter(p => p && p._shared).map(p => p.id))];
+        if (!planIds.length) return [];
+        const result = await client.from('attendance')
+            .select('id,plan_id,uid,status,method,audit,dispute,created_at,updated_at')
+            .in('plan_id', planIds)
+            .limit(1000);
+        if (result.error) throw sharedPlanError('attendance_load_failed', result.error);
+        const remote = (result.data || []).map(row => ({
+            id: row.id,
+            planId: row.plan_id,
+            uid: row.uid === user.id ? 'me' : row.uid,
+            status: row.status || 'present',
+            method: row.method || 'in_app_scanner',
+            at: row.updated_at ? Date.parse(row.updated_at) : (row.created_at ? Date.parse(row.created_at) : Date.now()),
+            token: '',
+            audit: Array.isArray(row.audit) ? row.audit : [],
+            dispute: row.dispute || undefined,
+            _sharedAttendance: true
+        }));
+        const keyOf = a => String(a.planId) + '|' + String(a.uid);
+        const remoteKeys = new Set(remote.map(keyOf));
+        S.attendance = (Array.isArray(S.attendance) ? S.attendance : [])
+            .filter(a => !remoteKeys.has(keyOf(a)))
+            .concat(remote);
+        if (typeof save === 'function') save();
+        if (options.render !== false && typeof render === 'function') render();
+        return remote;
+    })();
+    try { return await sharedAttendanceRefresh; }
+    finally { sharedAttendanceRefresh = null; }
+}
 
 /* Shared join notifications live in Supabase so they reach the right account on any device.
    The SQL migration creates one host notification for each new pending request and one

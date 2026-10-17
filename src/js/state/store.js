@@ -342,7 +342,8 @@ const O = {
     },
 
     chat: {
-        draft: ''
+        draft: '',
+        sendingId: ''
     },
 
     media: null,

@@ -621,8 +621,15 @@ const A = {
     },
     /* host confirms the meetup happened and ended. Host-only: the host's confirmation alone completes it (no attendee
        quorum), as long as no verified attendee has an open dispute. This never fabricates attendance records. */
-    end(e) {
+    async end(e) {
         const p = pl(e.dataset.v);
+        if (!p) return;
+        /* Preserve the local state so a failed server sync cannot leave a shared plan looking
+           completed only on the host's browser. */
+        const beforePlan = p._shared ? JSON.parse(JSON.stringify(p)) : null;
+        const beforeAttendance = p._shared
+            ? (S.attendance || []).filter(a => a.planId === p.id).map(a => JSON.parse(JSON.stringify(a)))
+            : [];
         const r = compHost(p);
 
         if (r == 'forbidden' || r == 'state')
@@ -630,6 +637,19 @@ const A = {
 
         if (r == 'save')
             return toast('We couldn\'t save that. Please try again.');
+
+        if (r == 'completed' && p._shared) {
+            try {
+                await completeSharedPlanRemote(p.id);
+            } catch (error) {
+                Object.keys(p).forEach(k => delete p[k]);
+                Object.assign(p, beforePlan);
+                S.attendance = (S.attendance || []).filter(a => a.planId !== p.id).concat(beforeAttendance);
+                save();
+                render();
+                return toast('Could not sync completion online. Check your connection and try again.');
+            }
+        }
 
         if (r == 'completed') {
             attFinish(p);
@@ -856,27 +876,53 @@ const A = {
         O.media = null;
         modal(mediaSheet(e.dataset.v));
     },
-    send(id) {
+    async send(id) {
         const i = $('#mi'),
             x = (i && i.value || O.chat.draft || '').trim().slice(0, chatMaxLen());
-        if (!x || !idOk(id) || !groupAccess(pl(id)))
+        const p = idOk(id) ? pl(id) : null;
+        if (!x || !p || !groupAccess(p))
             return;
+
+        /* Shared plans use Supabase as the source of truth. Never add a local-only message first. */
+        if (p._shared) {
+            if (O.chat.sendingId === id) return;
+            O.chat.sendingId = id;
+            const btn = $('#sendbtn');
+            if (btn) btn.disabled = true;
+            let sent = false;
+            try {
+                const message = await publishSharedChatMessage(id, { kind: 'text', text: x });
+                msgs(id).push(message);
+                if (O.chat.draft === x) O.chat.draft = '';
+                save();
+                sent = true;
+            } catch (e) {
+                O.chat.draft = O.chat.draft || x;
+                toast('Message could not be sent. Check your connection and try again.');
+            } finally {
+                if (O.chat.sendingId === id) O.chat.sendingId = '';
+                if (location.hash === '#/gc/' + id) {
+                    render();
+                    if (sent) scrollTo(0, 1e6);
+                    const mi = $('#mi');
+                    mi && mi.focus();
+                }
+            }
+            return;
+        }
+
+        /* Local-only plans retain their offline/demo behavior; shared plans never use fake replies. */
+        msgs(id).push({ by: 'me', x, t: hm() });
         O.chat.draft = '';
-        msgs(id).push({
-            by: 'me',
-            x,
-            t: hm()
-        });
         save();
         render();
         scrollTo(0, 1e6);
         const mi = $('#mi');
         mi && mi.focus();
-        const o = pl(id).members.filter(m => m != 'me' && !S.blocked.includes(m) && !usr(m).real);
+        const o = p.members.filter(m => m != 'me' && !S.blocked.includes(m) && !usr(m).real);
         const sid = O.sess;
         if (o.length)
             setTimeout(() => {
-                /* the sample reply belongs to the session that sent the message: never into a signed-out or different account */
                 if (O.sess !== sid || !groupAccess(pl(id)))
                     return;
                 const by = o[Math.random() * o.length | 0];
@@ -930,6 +976,24 @@ const A = {
 
         if (m.loc)
             message.loc = m.loc;
+        if (p._shared) {
+            try {
+                const saved = await publishSharedChatMessage(id, {
+                    kind: message.type || 'photo',
+                    text: '',
+                    mediaPath: message.mpath || '',
+                    loc: message.loc || null
+                });
+                message._remoteId = saved._remoteId;
+                message._shared = true;
+                message._myReaction = '';
+                message.r = '';
+                message.t = saved.t;
+            } catch (x) {
+                toast('Attachment could not be sent. Check your connection and try again.');
+                return;
+            }
+        }
         msgs(id).push(message);
         O.media = null;
         save();
@@ -956,13 +1020,25 @@ const A = {
         }
         render();
     },
-    react(e) {
-        if (!groupAccess(pl(e.dataset.k)))
+    async react(e) {
+        const p = pl(e.dataset.k);
+        if (!groupAccess(p))
             return;
-        const m = msgs(e.dataset.k)[+e.dataset.v],
-            c = ['🔥', '🕺', '😭', ''];
+        const list = msgs(e.dataset.k);
+        const m = list[+e.dataset.v];
         if (!m || m.sys)
             return;
+        if (p._shared && m._remoteId) {
+            try {
+                await toggleSharedMessageReaction(m._remoteId, m._myReaction || '');
+                await refreshSharedChatMessages(e.dataset.k, { render: false });
+                render();
+            } catch (x) {
+                toast('Reaction could not be saved. Try again.');
+            }
+            return;
+        }
+        const c = ['🔥', '🕺', '😭', ''];
         const i = c.indexOf(m.r || '');
         m.r = c[(i + 1) % 4];
         save();
