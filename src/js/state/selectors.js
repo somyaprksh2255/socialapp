@@ -7,8 +7,19 @@ const usr = id =>
             city: ''
         };
 
+/* A single non-persistent preview lets guests understand the product without exposing real plans.
+   It is deliberately not inserted into S.plans or written to Supabase/localStorage. */
+const GUEST_DEMO_PLAN = Object.freeze({
+    id: 'demo-preview-plan', demo: true, creator: 'demo-host', type: 'chai',
+    title: 'Demo plan · Chai & yap',
+    desc: 'This is a sample plan. Sign in and choose your city to discover real meetups.',
+    vibe: ['chill'], loc: 'Demo location', city: '', when: 'Sample time',
+    live: false, max: 4, members: [], who: 'Everyone', reqs: [], status: 'open',
+    day: 'Demo', auto: false, event: null, spot: '', created: 0
+});
+
 const pl = id =>
-    S.plans.find(p => p.id == id);
+    S.plans.find(p => p.id == id) || (id === GUEST_DEMO_PLAN.id && tier() === 'guest' ? GUEST_DEMO_PLAN : undefined);
 
 /* the supported city this person browses: their saved city if we support it, otherwise every supported city */
 const viewCity = () =>
@@ -18,27 +29,29 @@ const cityKey = value => String(value || '').trim().toLocaleLowerCase().replace(
 const sameCity = (a, b) => !!cityKey(a) && !!cityKey(b) && cityKey(a) === cityKey(b);
 const planCity = p => p && (p.city || cityOfLoc(p.loc));
 
-/* Guests do not receive plan/event discovery data. Normalize city comparisons so capitalization
-   and spacing cannot cause a selected-city filter mismatch. */
+/* Guests receive exactly one local demo preview, never live plans. Real discovery requires a
+   supported selected/profile city. Existing accepted groups remain visible if the member changes city. */
 const vis = () => {
-    if (tier() === 'guest') return [];
+    if (tier() === 'guest') return [GUEST_DEMO_PLAN];
     const selected = viewCity();
     return S.plans.filter(p =>
         p &&
-        !S.blocked.includes(p.creator) &&
         p.status === 'open' &&
-        isCity(planCity(p)) &&
-        (!selected || sameCity(planCity(p), selected))
+        (
+            groupAccess(p) ||
+            (!!selected && isCity(planCity(p)) && sameCity(planCity(p), selected) && !S.blocked.includes(p.creator))
+        )
     );
 };
 
 const visibleEvents = () => {
     if (tier() === 'guest') return [];
     const selected = viewCity();
+    if (!selected) return [];
     return (Array.isArray(S.events) ? S.events : []).filter(e =>
         e &&
         e.status === 'published' &&
-        (!selected || sameCity(e.city || e.locCity || cityOfLoc(e.loc), selected))
+        sameCity(e.city || e.locCity || cityOfLoc(e.loc), selected)
     );
 };
 
