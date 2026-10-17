@@ -1,8 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 
-const root = path.resolve(import.meta.dirname || path.dirname(new URL(import.meta.url).pathname), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = p => fs.readFileSync(path.join(root, p), 'utf8');
 const supabase = read('src/js/utils/supabase.js');
 const auth = read('src/js/app/auth.js');
