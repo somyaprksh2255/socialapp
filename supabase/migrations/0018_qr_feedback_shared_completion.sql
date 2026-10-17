@@ -155,13 +155,14 @@ begin
         'from', 'none', 'to', 'present', 'reason', 'Host confirmed the meetup ended'
     );
 
-    insert into public.attendance (plan_id, uid, status, method, marked_by, audit)
+    insert into public.attendance as existing_attendance
+        (plan_id, uid, status, method, marked_by, audit)
     values (p_plan, v_uid, 'present', 'organizer', v_uid, jsonb_build_array(v_entry))
     on conflict (plan_id, uid) do update
        set status = 'present', method = 'organizer', marked_by = v_uid,
            updated_at = now(),
-           audit = public.attendance.audit || jsonb_build_array(v_entry)
-     where public.attendance.dispute is null;
+           audit = existing_attendance.audit || jsonb_build_array(v_entry)
+     where existing_attendance.dispute is null;
 
     if not found then
         raise exception 'host attendance could not be finalized';
