@@ -439,6 +439,10 @@ async function publishSharedPlan(plan) {
 
 function sharedPlanFromRow(row, uid, memberships, requests) {
     const own = row.creator === uid;
+    const completionRow = row.completion && typeof row.completion === 'object' ? {
+        ...row.completion,
+        by: row.completion.by === uid ? 'me' : row.completion.by
+    } : null;
     const memberRows = memberships.filter(m => m.plan_id === row.id && m.state === 'member');
     const reqRows = requests.filter(r => r.plan_id === row.id && r.state === 'pending');
     const members = memberRows.map(m => m.user_id === uid ? 'me' : m.user_id);
@@ -452,7 +456,9 @@ function sharedPlanFromRow(row, uid, memberships, requests) {
         locSource: row.loc_source || '', locPlace: row.loc_place || '', city: row.city || '',
         when: row.live ? 'LIVE NOW' : (row.when_at || ''), live: !!row.live, max: Number(row.max || row.size || 2),
         members, who: row.who || 'Everyone', reqs: reqRows.map(r => ({ u: r.user_id === uid ? 'me' : r.user_id, at: r.at })),
-        status: row.status || 'open', day: row.day || 'Today', auto: !!row.auto,
+        status: row.status === 'closed' ? (completionRow ? 'ended' : 'closed') : 'open',
+        completion: completionRow,
+        day: row.day || 'Today', auto: !!row.auto,
         event: row.event_id || null, spot: row.spot || '', created: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
         _shared: true, _supabaseCreatorUid: row.creator
     };
@@ -479,7 +485,7 @@ async function refreshSharedPlans(options = {}) {
         /* Feed query deliberately excludes exact spot and coordinates. RLS is row-level,
            not column-level, so selecting '*' here would expose private meetup details to
            every authenticated user who can discover a plan. */
-        const publicPlanColumns = 'id,creator,type,title,descr,vibe,loc,dist,when_at,live,size,who,status,max,auto,city,day,event_id,created_at,updated_at';
+        const publicPlanColumns = 'id,creator,type,title,descr,vibe,loc,dist,when_at,live,size,who,status,max,auto,city,day,event_id,completion,created_at,updated_at';
         const plansResult = await client.from('plans').select(publicPlanColumns).eq('status', 'open').order('created_at', { ascending: false }).limit(300);
         if (plansResult.error) throw sharedPlanError('plan_feed_load_failed', plansResult.error);
         const [membersResult, requestsResult, countsResult] = await Promise.all([
@@ -490,7 +496,25 @@ async function refreshSharedPlans(options = {}) {
         if (membersResult.error) throw sharedPlanError('plan_memberships_load_failed', membersResult.error);
         if (requestsResult.error) throw sharedPlanError('plan_requests_load_failed', requestsResult.error);
         if (countsResult.error) throw sharedPlanError('plan_member_counts_load_failed', countsResult.error);
-        const rows = plansResult.data || [], memberships = membersResult.data || [], requests = requestsResult.data || [];
+        const memberships = membersResult.data || [], requests = requestsResult.data || [];
+        /* Also load closed plans for accepted members/hosts so attendance and feedback remain
+           available after a meetup ends. Closed plans never enter public discovery. */
+        const ownMembershipPlanIds = [...new Set(memberships
+            .filter(m => m.user_id === user.id && m.state === 'member')
+            .map(m => m.plan_id)
+            .filter(Boolean))];
+        let closedRows = [];
+        if (ownMembershipPlanIds.length) {
+            const closedResult = await client.from('plans')
+                .select(publicPlanColumns)
+                .eq('status', 'closed')
+                .in('id', ownMembershipPlanIds)
+                .order('updated_at', { ascending: false })
+                .limit(300);
+            if (closedResult.error) throw sharedPlanError('plan_history_load_failed', closedResult.error);
+            closedRows = closedResult.data || [];
+        }
+        const rows = [...new Map([...(plansResult.data || []), ...closedRows].map(row => [row.id, row])).values()];
         const countByPlan = new Map((countsResult.data || []).map(x => [x.plan_id, Number(x.member_count || 0)]));
         /* Private location details are fetched only for plans the signed-in user hosts
            or belongs to. The membership SELECT policy permits the user to see their own
@@ -700,6 +724,97 @@ async function refreshSharedChatMessages(planId, options = {}) {
     sharedChatRefreshes.set(key, task);
     try { return await task; }
     finally { if (sharedChatRefreshes.get(key) === task) sharedChatRefreshes.delete(key); }
+}
+
+/* Sync the host's completion to Supabase so the plan closes for all members and feedback
+   becomes eligible on every device. The server-side RPC also marks the host present atomically. */
+async function completeSharedPlanRemote(planId) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const plan = typeof pl === 'function' ? pl(planId) : null;
+    if (!plan || !plan._shared || plan.creator !== 'me')
+        throw sharedPlanError('plan_completion_forbidden');
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id)
+        throw sharedPlanError('authentication_required');
+    const result = await client.rpc('complete_shared_plan', { p_plan: String(planId) });
+    if (result.error || result.data !== true)
+        throw sharedPlanError('plan_completion_sync_failed', result.error);
+    return true;
+}
+
+/* Shared feedback keeps individual responses private. The database authorizes submissions
+   only for completed meetups with verified attendance; summaries are aggregate-only (3+ ratings). */
+async function submitSharedFeedback(plan, kind, payload, targetUid) {
+    if (!plan || !plan._shared) return true; // local/demo plans keep their local behavior
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    if (!['meetup', 'person'].includes(kind)) throw sharedPlanError('feedback_invalid_kind');
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id) throw sharedPlanError('authentication_required');
+    if (plan.status !== 'ended') throw sharedPlanError('ineligible');
+    const rating = Math.round(Number(payload && payload.rating));
+    if (!(rating >= 1 && rating <= 5)) throw sharedPlanError('feedback_invalid_rating');
+    const target = kind === 'person' ? String(targetUid || '') : '';
+    if (kind === 'person' && (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target) || target === user.id))
+        throw sharedPlanError('feedback_invalid_target');
+    const duplicateQuery = client.from('feedback').select('id')
+        .eq('plan_id', plan.id).eq('by', user.id).eq('kind', kind);
+    if (kind === 'person') duplicateQuery.eq('to_uid', target);
+    else duplicateQuery.is('to_uid', null);
+    const prior = await duplicateQuery.limit(1);
+    if (prior.error) throw sharedPlanError('feedback_duplicate_check_failed', prior.error);
+    if ((prior.data || []).length) throw sharedPlanError('duplicate');
+    const row = {
+        plan_id: plan.id, by: user.id, to_uid: kind === 'person' ? target : null,
+        kind, rating, tags: [...new Set((payload && payload.tags || []).map(String).slice(0, 20))],
+        notes: String(payload && payload.comment || '').trim().slice(0, 500)
+    };
+    const result = await client.from('feedback').insert(row).select('id').single();
+    if (result.error) {
+        if (result.error.code === '23505') throw sharedPlanError('duplicate', result.error);
+        if (result.error.code === '42501') throw sharedPlanError('ineligible', result.error);
+        throw sharedPlanError('feedback_save_failed', result.error);
+    }
+    return true;
+}
+
+async function refreshSharedFeedbackSummaries() {
+    const client = getSupabaseClient();
+    if (!client) return [];
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id) return [];
+    const result = await client.rpc('shared_feedback_summaries');
+    if (result.error) throw sharedPlanError('feedback_summary_load_failed', result.error);
+    const current = await client.auth.getUser();
+    if (current.error || !current.data || !current.data.user || current.data.user.id !== user.id ||
+        !S.me || S.me.guest || S.me.sub !== user.id) return [];
+    const planSummaries = {};
+    const personSummaries = {};
+    (result.data || []).forEach(row => {
+        const n = Number(row.n || 0);
+        if (n < 3) return;
+        const tags = row.tags && typeof row.tags === 'object' ? row.tags : {};
+        if (row.kind === 'meetup' && row.plan_id) {
+            planSummaries[row.plan_id] = {
+                n, avg: row.avg == null ? null : Number(row.avg),
+                tags: Object.entries(tags).sort((a, b) => b[1] - a[1]).slice(0, 3)
+            };
+        } else if (row.kind === 'person' && row.target_uid) {
+            personSummaries[row.target_uid] = {
+                n, avg: row.avg == null ? null : Number(row.avg), tags
+            };
+        }
+    });
+    /* Clear stale shared summaries for the plans currently cached by this account. */
+    (S.plans || []).filter(p => p && p._shared).forEach(p => {
+        if (!Object.prototype.hasOwnProperty.call(planSummaries, p.id))
+            planSummaries[p.id] = null;
+    });
+    S.feedbackSummaries = { ...(S.feedbackSummaries || {}), ...planSummaries };
+    S.trustSummaries = personSummaries;
+    if (typeof save === 'function') save();
+    return result.data || [];
 }
 
 /* Attendance written by the protected server scanner must be read back on each attendee's device.
