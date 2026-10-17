@@ -350,18 +350,35 @@ async function loadSupabaseProfile(user) {
 function hydrateSupabaseProfile(rec, who, row) {
     if (!rec || !row) return rec;
     const savedProgress = rec.ob && typeof rec.ob === 'object' ? rec.ob : {};
+    /* Older releases saved completed onboarding locally but could leave profiles.onboarded
+       false on the server. For the same stable Supabase user ID, don't demote a complete
+       local profile just because that legacy server flag was never synced. */
+    const localWasComplete = !!rec.onboarded
+        && !!String(rec.name || '').trim()
+        && !!String(rec.username || '').trim()
+        && !!String(rec.city || '').trim()
+        && !!String(rec.gender || '').trim()
+        && !!String(rec.ageRange || '').trim();
+    const keepLocalCompletion = !row.onboarded && localWasComplete;
+    const value = (remote, local, fallback = '') =>
+        keepLocalCompletion ? String(local || fallback || '') :
+        remote == null ? String(local || fallback || '') : String(remote);
     rec.sub = who.sub;
     rec.email = String(who.email || row.email || rec.email || '').trim().toLowerCase();
-    rec.name = row.name == null ? String(rec.name || who.name || '') : String(row.name);
-    rec.username = row.username == null ? String(rec.username || '') : String(row.username);
-    rec.gender = row.gender == null ? String(rec.gender || '') : String(row.gender);
-    rec.city = row.city == null ? String(rec.city || '') : String(row.city);
-    rec.ageRange = row.age_range == null ? String(rec.ageRange || '') : String(row.age_range);
-    rec.bio = row.bio == null ? String(rec.bio || '') : String(row.bio);
-    rec.photo = row.photo_url == null ? String(rec.photo || who.photo || '') : String(row.photo_url);
-    rec.interests = Array.isArray(row.interests) ? row.interests : (rec.interests || []);
-    rec.rel = row.rel && typeof row.rel === 'object' ? row.rel : (rec.rel || {});
-    const profileComplete = !!row.onboarded
+    rec.name = value(row.name, rec.name, who.name);
+    rec.username = value(row.username, rec.username);
+    rec.gender = value(row.gender, rec.gender);
+    rec.city = value(row.city, rec.city);
+    rec.ageRange = value(row.age_range, rec.ageRange);
+    rec.bio = value(row.bio, rec.bio);
+    rec.photo = value(row.photo_url, rec.photo, who.photo);
+    rec.interests = keepLocalCompletion
+        ? (Array.isArray(rec.interests) ? rec.interests : [])
+        : Array.isArray(row.interests) ? row.interests : (rec.interests || []);
+    rec.rel = keepLocalCompletion
+        ? (rec.rel && typeof rec.rel === 'object' ? rec.rel : {})
+        : row.rel && typeof row.rel === 'object' ? row.rel : (rec.rel || {});
+    const profileComplete = (!!row.onboarded || keepLocalCompletion)
         && !!rec.name.trim()
         && !!rec.username.trim()
         && !!rec.city.trim()
