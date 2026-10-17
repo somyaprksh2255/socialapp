@@ -23,7 +23,7 @@ assert.match(access, /!!viewCity\(\)[\s\S]*sameCity\(planCity\(p\), viewCity\(\)
 assert.match(actions, /rpc\('request_shared_plan_join'/, 'join must be persisted with the authoritative RPC');
 assert.match(actions, /rpc\('decide_shared_plan_join'/, 'host decisions must be persisted with the authoritative RPC');
 assert.match(actions, /rpc\('cancel_shared_plan_join'/, 'request cancellation must be persisted with the authoritative RPC');
-assert.match(actions, /statePlan\.reqs\.push\(\{ u: 'me'/, 'successful join RPC must immediately update the requester's local pending state');
+assert.match(actions, /statePlan\.reqs\.push\(\{ u: 'me'/, 'successful join RPC must immediately update the requester local pending state');
 assert.match(actions, /request saved; shared-plan refresh failed/, 'a follow-up refresh failure must not hide a successful join request');
 assert.match(supabase, /reqs: reqRows\.map\(r => \(\{ u: r\.user_id === uid \? 'me' : r\.user_id, at: r\.at \}\)\)/, 'refreshed pending request identity must map to the local me identifier');
 assert.match(events, /S\.me\.guest[\s\S]*S\.events = \[\]/, 'guest Event cache must be cleared');
