@@ -39,7 +39,7 @@ const vis = () => {
         p.status === 'open' &&
         (
             groupAccess(p) ||
-            (!!selected && isCity(planCity(p)) && sameCity(planCity(p), selected) && !S.blocked.includes(p.creator))
+            (p._shared === true && !!selected && isCity(planCity(p)) && sameCity(planCity(p), selected) && !S.blocked.includes(p.creator))
         )
     );
 };
