@@ -26,7 +26,8 @@ assert.match(actions, /rpc\('cancel_shared_plan_join'/, 'request cancellation mu
 assert.match(actions, /statePlan\.reqs\.push\(\{ u: 'me'/, 'successful join RPC must immediately update the requester local pending state');
 assert.match(actions, /request saved; shared-plan refresh failed/, 'a follow-up refresh failure must not hide a successful join request');
 assert.match(supabase, /reqs: reqRows\.map\(r => \(\{ u: r\.user_id === uid \? 'me' : r\.user_id, at: r\.at \}\)\)/, 'refreshed pending request identity must map to the local me identifier');
-assert.match(events, /S\.me\.guest[\s\S]*S\.events = \[\]/, 'guest Event cache must be cleared');
+assert.match(events, /const clearEvents = \(\) => \{[\s\S]*?S\.events = \[\]/, 'Event cache clearing must be centralized and reusable');
+assert.match(events, /S\.me\.guest[\s\S]*clearEvents\(\)/, 'guest Event cache must be cleared');
 assert.match(events, /Authorization: 'Bearer ' \+ token/, 'Event API request must carry the authenticated token');
 assert.match(events, /normCity\(row\.payload && row\.payload\.city\) === normCity\(profileCity\)/, 'frontend must discard Events not in the saved profile city');
 assert.match(api, /app\.get\('\/api\/events',requireAuth/, 'Event API must require authentication');
