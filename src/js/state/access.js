@@ -186,6 +186,7 @@ const planVisible = p => !!p && (
     (p.demo === true && tier() === 'guest') ||
     groupAccess(p) ||
     (tier() !== 'guest' &&
+        p._shared === true &&
         !S.blocked.includes(p.creator) &&
         !!viewCity() &&
         isCity(planCity(p)) &&
