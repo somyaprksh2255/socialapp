@@ -25,11 +25,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Squado
-        run: npm run build
+      - name: Run full regression suite
+        run: npm test
 
-      - name: Test app workflows and shared chat, QR, city and feedback paths
-        run: node tests/e2e.test.js
-
-      - name: Test authoritative QR attendance endpoint
-        run: node tests/attendance.server.test.js
+      - name: Test account restoration and shared join notifications
+        run: node tests/auth-restore-join-notifications.test.mjs
