@@ -10,7 +10,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.attendance (
     id uuid primary key default gen_random_uuid(),
     plan_id text not null references public.plans(id) on delete cascade,
-    uid uuid not null references public.profiles(auth_uid) on delete cascade,
+    uid uuid not null references public.profiles(id) on delete cascade,
     audit jsonb not null default '[]'::jsonb,
     dispute jsonb,
     created_at timestamptz not null default now(),
@@ -21,8 +21,8 @@ create table if not exists public.attendance (
 create table if not exists public.feedback (
     id uuid primary key default gen_random_uuid(),
     plan_id text not null references public.plans(id) on delete cascade,
-    by uuid not null references public.profiles(auth_uid) on delete cascade,
-    to_uid uuid references public.profiles(auth_uid) on delete set null,
+    by uuid not null references public.profiles(id) on delete cascade,
+    to_uid uuid references public.profiles(id) on delete set null,
     rating int,
     notes text,
     created_at timestamptz not null default now()
@@ -34,7 +34,7 @@ alter table public.plans add column if not exists completion jsonb;
 -- was not applied. These statements are safe to re-run.
 alter table public.attendance add column if not exists status text not null default 'present';
 alter table public.attendance add column if not exists method text;
-alter table public.attendance add column if not exists marked_by uuid references public.profiles(auth_uid) on delete set null;
+alter table public.attendance add column if not exists marked_by uuid references public.profiles(id) on delete set null;
 
 do $$
 begin
