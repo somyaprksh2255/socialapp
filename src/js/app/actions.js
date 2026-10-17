@@ -1060,9 +1060,13 @@ A.confirmed = () => {
     }), 120);
 };
 A.notifs = () => {
-    modal(notifSheet());
-    myNotifs().forEach(n => n.u = 0);
+    const current = myNotifs();
+    current.forEach(n => n.u = 0);
     save();
+    modal(notifSheet());
+    const remoteIds = current.filter(n => n._sharedNotificationId).map(n => n._sharedNotificationId);
+    if (remoteIds.length && typeof markSharedNotificationsRead === 'function')
+        markSharedNotificationsRead(remoteIds).catch(e => console.warn('[notifications] read state sync failed:', e && e.code || e));
 };
 A.notifGo = e => {
     const n = myNotifs().find(x => x.id == e.dataset.v);
