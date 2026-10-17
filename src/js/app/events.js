@@ -127,29 +127,53 @@ async function refreshPublishedEvents() {
     const cfg = window.SQUADO_CONFIG || {};
     const base = String(cfg.apiBaseUrl || '').replace(/\/$/, '');
     if (!base || typeof S === 'undefined' || typeof save !== 'function') return;
-    /* A guest must never retain a previously cached real Event list. */
-    if (!S.me || S.me.guest || typeof supabaseAccessToken !== 'function') {
+
+    const profileCity = String(S.me && S.me.city || '').trim();
+    const clearEvents = () => {
+        const changed = Array.isArray(S.events) && S.events.length > 0;
         S.events = [];
         save();
+        if (changed && typeof render === 'function') render();
+    };
+
+    /* Never carry a prior account/city's Event cache into a new session or a failed API read. */
+    if (!S.me || S.me.guest || !profileCity || typeof supabaseAccessToken !== 'function') {
+        clearEvents();
         return [];
     }
+
+    const normCity = value => String(value || '').trim().toLocaleLowerCase().replace(/\s+/g, ' ');
     try {
         const token = await supabaseAccessToken();
-        if (!token) { S.events = []; save(); return []; }
+        if (!token) { clearEvents(); return []; }
+
         const res = await fetch(base + '/api/events', {
             headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }
         });
         if (!res.ok) {
-            if (res.status === 401 || res.status === 403) { S.events = []; save(); }
+            clearEvents();
             return [];
         }
+
         const data = await res.json();
         const remote = Array.isArray(data.events) ? data.events : [];
-        const byId = new Map(remote.map(row => [row.id, { ...(row.payload || {}), id: row.id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, serverManaged: true }]));
-        /* The API returns only published Events for this authenticated profile's city. */
-        S.events = [...byId.values()];
+        /* Defence in depth: even if an API cache or bad response includes another city, discard it. */
+        S.events = remote
+            .filter(row => row && normCity(row.payload && row.payload.city) === normCity(profileCity))
+            .map(row => ({
+                ...(row.payload || {}),
+                id: row.id,
+                status: row.status,
+                createdAt: row.created_at,
+                updatedAt: row.updated_at,
+                serverManaged: true
+            }));
         save();
         if (typeof render === 'function') render();
         return S.events;
-    } catch (_) { return []; }
+    } catch (err) {
+        console.warn('[events] city-scoped Event refresh failed; clearing cached Events:', err && (err.message || err));
+        clearEvents();
+        return [];
+    }
 }
