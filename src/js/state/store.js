@@ -37,6 +37,7 @@ const FRESH = () => ({
     plans: [],
     events: [],
     notifs: [],
+    remoteNotifs: [],
     msgs: {},
     unread: {},
     blocked: [],
@@ -209,6 +210,9 @@ if (S.me.guest)
 
 if (!S.notifs)
     S.notifs = [];
+
+if (!Array.isArray(S.remoteNotifs))
+    S.remoteNotifs = [];
 
 /* rejected requests are never announced: drop any such notification saved by an older version */
 S.notifs = S.notifs.filter(n => n.type != 'join-rejected');
