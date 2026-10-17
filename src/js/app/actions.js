@@ -280,15 +280,56 @@ const A = {
             return toast('This one\'s ' + p.who.toLowerCase() + ' 🫶');
         modal(`\<h2 style="margin-top:0">Ask to join the squad 👀\</h2>\<p>\<b>${esc(p.title)}\</b>\<br>\<span class="mut">${esc(p.loc)} · ${p.live ? 'Live now' : p.when} · ${(Number.isFinite(p.memberCount) ? p.memberCount : p.members.length)} / ${p.max} people${p.who != 'Everyone' ? ' · ' + p.who : ''}\</span>\</p>\<p class="mut">${esc(usr(p.creator).name)} checks your profile, then accepts or passes.\</p>\<button class="btn pink wide" data-a="cjoin" data-v="${p.id}">Send request\</button>\<p style="text-align:center">\<button class="btn ghost sm" data-a="close">Nvm\</button>\</p>`);
     },
-    cjoin(e) {
+    async cjoin(e) {
         const p = pl(e.dataset.v);
         const c = joinCheck(p);
         if (c != 'ok') {
             modal('');
-            if (c == 'auth' || c == 'onboarding' || c == 'member')
-                return;
+            if (c === 'auth') {
+                rememberIntent('join', p && p.id);
+                return goHash('#/login');
+            }
+            if (c === 'onboarding') {
+                rememberIntent('join', p && p.id);
+                return goHash('#/signup');
+            }
+            if (c === 'member') return toast('You are already in this squad.');
             return toast(JOIN_MSG[c] ? JOIN_MSG[c](p) : 'This plan is no longer available.');
         }
+        if (!p) { modal(''); return toast('This plan is no longer available.'); }
+        if (p.demo) { modal(''); rememberIntent('join', p.id); return goHash('#/login'); }
+
+        /* Published shared plans must use the database transaction; local-only state is not a request. */
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            const client = getSupabaseClient();
+            if (!client) { modal(''); return toast('Connection unavailable. Please sign in again and retry.'); }
+            const button = e && e.closest ? e.closest('button') : null;
+            if (button) { button.disabled = true; button.textContent = 'Sending…'; }
+            try {
+                const result = await client.rpc('request_shared_plan_join', { p_plan_id: p.id });
+                if (result.error) throw result.error;
+                const status = result.data && result.data.status;
+                if (status === 'pending' || status === 'accepted') {
+                    await refreshSharedPlans({ render: false });
+                    modal('');
+                    if (status === 'accepted') {
+                        confetti();
+                        return modal(`<div class="authst"><span class="okc">${I('check', '26px')}</span><h2>You're in 🎉</h2><p class="mut">Your membership is saved. The group chat is unlocked.</p></div><a class="btn pink wide" href="#/gc/${p.id}" data-a="close">Enter the GC</a>`);
+                    }
+                    return modal('<h2 style="margin-top:0">Request sent ⏳</h2><p class="mut">Your request is saved. The host can now review it.</p><button class="btn pink wide" data-a="close">Cool</button>');
+                }
+                const messages = {host:'You host this squad already.',member:'You are already a member.',removed:'You can’t request to join this squad.',rejected:'The host previously declined this request.',full:'This squad is full.',closed:'This plan is closed.',blocked:'You or the host has blocked the other account.',gender:'This plan is not available for your profile.',not_found:'This plan is no longer available.'};
+                modal('');
+                return toast(messages[status] || 'The request was not saved. Please try again.');
+            } catch (err) {
+                console.error('[join] request_shared_plan_join failed:', err && (err.code || err.message) || err);
+                modal('');
+                return toast('Could not send your request. Check your connection and try again.');
+            } finally {
+                if (button) { button.disabled = false; button.textContent = 'Send request'; }
+            }
+        }
+
         const r = memRequest(p, 'me');
         if (!r.ok) {
             modal('');
@@ -297,28 +338,11 @@ const A = {
         if (r.state == 'accepted') {
             S.me.rel.joined++;
             sys(p.id, `${S.me.name} joined the squad 👋`);
-            notify(p.creator, {
-                type: 'member',
-                ic: 'user-plus',
-                c: 'green',
-                t: `${S.me.name} joined your squad`,
-                b: p.title,
-                planId: p.id,
-                userId: 'me'
-            });
-            save();
-            confetti();
+            notify(p.creator, { type: 'member', ic: 'user-plus', c: 'green', t: `${S.me.name} joined your squad`, b: p.title, planId: p.id, userId: 'me' });
+            save(); confetti();
             return modal(`<div class="authst"><span class="okc">${I('check', '26px')}</span><h2>You're in 🎉</h2><p class="mut">This host auto-accepts. The GC is unlocked.</p></div><a class="btn pink wide" href="#/gc/${p.id}" data-a="close">Enter the GC</a>`);
         }
-        notify(p.creator, {
-            type: 'join_request',
-            ic: 'user-plus',
-            c: 'pink',
-            t: `${S.me.name} wants to join your squad`,
-            b: `${p.title} · tap to review`,
-            planId: p.id,
-            userId: 'me'
-        });
+        notify(p.creator, { type: 'join_request', ic: 'user-plus', c: 'pink', t: `${S.me.name} wants to join your squad`, b: `${p.title} · tap to review`, planId: p.id, userId: 'me' });
         save();
         modal(`<h2 style="margin-top:0">Request sent ⏳</h2><p class="mut">You're not in yet. The host decides after seeing your profile.</p><button class="btn pink wide" data-a="close">Cool</button>`);
     },
