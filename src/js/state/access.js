@@ -180,13 +180,16 @@ const groupAccess = p => tier() == 'ready' && ['host', 'member'].includes(member
 /* the host is the only administrative role that exists in Squado */
 const isAdmin = p => groupAccess(p) && p.creator == 'me';
 
-/* Guests cannot browse plans. Public discovery is limited to the selected city;
+/* Guests may see only the single local demo preview. Real plans require a selected/profile city match;
    accepted hosts/members retain access to their own group if they change cities. */
 const planVisible = p => !!p && (
+    (p.demo === true && tier() === 'guest') ||
     groupAccess(p) ||
     (tier() !== 'guest' &&
         !S.blocked.includes(p.creator) &&
-        (!viewCity() || sameCity(planCity(p), viewCity())))
+        !!viewCity() &&
+        isCity(planCity(p)) &&
+        sameCity(planCity(p), viewCity()))
 );
 
 /* may this person ask to join? 'ok' or the reason it is refused */
