@@ -45,6 +45,20 @@ end $$;
 
 create index if not exists attendance_uid_idx on public.attendance(uid);
 
+-- Browser clients may read attendance only for plans where they are accepted members
+-- or the host. All attendance writes are performed by the trusted server RPC, not
+-- directly from the browser. This also covers installs where the table was created
+-- by this migration rather than by the older schema artifact.
+alter table public.attendance enable row level security;
+
+drop policy if exists attendance_select on public.attendance;
+create policy attendance_select on public.attendance
+    for select to authenticated
+    using (public.is_member(plan_id) or public.is_host(plan_id));
+
+revoke all on public.attendance from anon, authenticated;
+grant select on public.attendance to authenticated;
+
 -- Only the trusted server (which verifies the host's access token and plan membership)
 -- may execute this RPC. It writes the attendance row atomically and never clears a dispute.
 create or replace function public.record_checkin(
