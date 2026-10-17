@@ -559,7 +559,7 @@ A.authRetry = () => {
     render();
 };
 
-window.finishOb = () => {
+window.finishOb = async () => {
     const o = O.ob;
 
     if (S.me.guest)
@@ -584,11 +584,29 @@ window.finishOb = () => {
         return toast('We couldn\'t save your profile. Please try again.');
     }
 
+    /* Onboarding must be durable on the server as well as in this browser; otherwise
+       a returning user on a new session/device looks like a brand-new profile. */
+    if (typeof supabaseConfigured === 'function' && supabaseConfigured()) {
+        try {
+            await syncSupabaseProfile();
+        } catch (e) {
+            S.me = prev;
+            S.in = false;
+            save();
+            console.error('[auth] completed profile sync failed:', e && (e.code || e.message) || e);
+            return toast('Your profile could not be synced. Check your connection and try again.');
+        }
+    }
+
     AUTH.state = 'authenticated';
     AUTH.error = false;
     confetti();
     toast('You\'re in, ' + S.me.name + ' 🎉');
     afterAuth();
+    if (typeof refreshSharedPlans === 'function')
+        refreshSharedPlans({ render: false }).catch(e => console.warn('[plans] post-onboarding refresh failed:', e && e.code || e));
+    if (typeof refreshSharedNotifications === 'function')
+        refreshSharedNotifications({ render: false }).catch(e => console.warn('[notifications] post-onboarding refresh failed:', e && e.code || e));
 };
 
 window.signOutUser = async () => {

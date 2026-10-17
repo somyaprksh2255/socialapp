@@ -275,6 +275,7 @@ function clearPrivateUi() {
     O.os = { step: 0, move: '', size: 0, loc: '', desc: '', cname: '' };
     O.ob = { step: 0, name: '', username: '', city: '', locOk: 0, gender: '', age: '', interests: [] };
     O.unRemote = '';
+    S.remoteNotifs = [];
 
     modal('');
 

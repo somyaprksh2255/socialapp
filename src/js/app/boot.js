@@ -58,8 +58,11 @@ if (typeof refreshPublishedEvents === 'function') refreshPublishedEvents();
 
 /* Shared plans are server-owned; refresh across users/tabs without replacing local UI state. */
 setInterval(() => {
-    if (typeof refreshSharedPlans === 'function' && S.me && !S.me.guest)
+    if (!S.me || S.me.guest) return;
+    if (typeof refreshSharedPlans === 'function')
         refreshSharedPlans({ render: false }).catch(e => console.warn('[plans] refresh failed:', e && e.code || e));
-    if (typeof refreshSharedBlocks === 'function' && S.me && !S.me.guest)
+    if (typeof refreshSharedNotifications === 'function')
+        refreshSharedNotifications({ render: false }).catch(e => console.warn('[notifications] refresh failed:', e && e.code || e));
+    if (typeof refreshSharedBlocks === 'function')
         refreshSharedBlocks({ render: false }).catch(e => console.warn('[blocks] refresh failed:', e && e.code || e));
-}, 30000);
+}, 15000);

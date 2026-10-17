@@ -85,13 +85,9 @@ function normalizeOAuthHash() {
    they exist. One Supabase identity (session.user.id) maps to one profile via createAccount's dedupe-by-sub. */
 async function handleSupabaseUser(session, attempt) {
     attempt = attempt || 0;
-
     const u = session && session.user;
+    if (!u || !u.id) return;
 
-    if (!u || !u.id)
-        return;
-
-    /* wait for the app's globals to be ready before touching state (bounded: ~2s) */
     const ready = typeof S !== 'undefined'
         && typeof createAccount === 'function'
         && typeof enterAccount === 'function'
@@ -99,19 +95,15 @@ async function handleSupabaseUser(session, attempt) {
         && typeof afterAuth === 'function'
         && typeof obPending === 'function'
         && typeof render === 'function';
-
     if (!ready) {
         if (attempt >= 40) {
             console.warn('[supabase] app not ready; dropping sign-in handling');
             return;
         }
-
         setTimeout(() => handleSupabaseUser(session, attempt + 1), 50);
         return;
     }
 
-    /* If this Supabase identity has the trusted admin role, keep it out of the regular user
-     * experience. The Admin Portal then requires the separate email/password login flow. */
     const apiBase = String((window.SQUADO_CONFIG || {}).apiBaseUrl || '').replace(/\/$/, '');
     if (apiBase && session.access_token && !window.__squadoAdminRedirectChecked) {
         window.__squadoAdminRedirectChecked = true;
@@ -130,49 +122,89 @@ async function handleSupabaseUser(session, attempt) {
         photo: meta.avatar_url || meta.picture || ''
     };
 
-    /* already signed in as this exact identity: nothing to do (idempotent for repeated INITIAL_SESSION/SIGNED_IN) */
-    if (S.me && !S.me.guest && S.me.sub === who.sub) {
-        normalizeOAuthHash();
-        syncSupabaseProfile().then(() => refreshSharedPlans({ render: false }))
-            .catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
+    /* Supabase is the durable profile source. Read it before creating a new local
+       account or writing anything, otherwise a returning user on a fresh browser can
+       be mistaken for a new user and the empty local profile can overwrite their row. */
+    let remoteProfile = null;
+    try {
+        remoteProfile = await loadSupabaseProfile(u);
+    } catch (e) {
+        console.error('[supabase] saved profile lookup failed:', e && (e.code || e.message) || e);
+        if (typeof modal === 'function' && typeof authProblem === 'function')
+            modal(authProblem('lookup'));
         return;
     }
 
-    if (typeof modal === 'function')
-        modal('');
+    /* Repeated INITIAL_SESSION / SIGNED_IN for the current identity must still restore
+       the database profile, especially after the account email/metadata changes. */
+    if (S.me && !S.me.guest && S.me.sub === who.sub) {
+        if (remoteProfile) {
+            hydrateSupabaseProfile(S.me, who, remoteProfile);
+            save();
+            if (obPending()) startOb(S.me.name || who.name);
+            else afterAuth();
+        } else if (!S.me.onboarded) {
+            startOb(S.me.name || who.name);
+        }
+        normalizeOAuthHash();
+        if (!obPending() && S.me.onboarded) {
+            syncSupabaseProfile(u)
+                .then(() => Promise.all([
+                    refreshSharedPlans({ render: false }),
+                    refreshSharedNotifications({ render: false })
+                ]))
+                .catch(e => console.warn('[supabase] initial profile/feed/notification sync failed:', e && e.code || e));
+        }
+        return;
+    }
+
+    if (typeof modal === 'function') modal('');
 
     let rec = S.users.find(x => x.real && x.sub === who.sub) || null;
-
     if (!rec) {
         try {
             rec = createAccount(who);
-        }
-        catch (e) {
-            if (typeof authProblem === 'function')
-                modal(authProblem('save'));
+        } catch (e) {
+            if (typeof authProblem === 'function') modal(authProblem('save'));
             return;
         }
     }
 
-    /* backfill a Google avatar once if the local profile has none yet */
-    if (who.photo && !rec.photo)
-        rec.photo = who.photo;
+    if (remoteProfile) {
+        hydrateSupabaseProfile(rec, who, remoteProfile);
+    } else {
+        /* A local profile from the earlier device-local version may exist even before
+           its first server sync. Preserve it; do not reset a completed local account. */
+        rec.sub = who.sub;
+        rec.email = who.email || rec.email || '';
+        if (who.photo && !rec.photo) rec.photo = who.photo;
+    }
+    save();
 
-    /* only switch the live session if this account is not already current */
-    if (!(S.acct && S.acct == rec.id && !S.me.guest))
+    const switchingAccount = !(S.acct && S.acct === rec.id && !S.me.guest);
+    if (switchingAccount) {
+        S.remoteNotifs = [];
         enterAccount(rec.id);
+    }
 
     normalizeOAuthHash();
 
-    if (rec.onboarded === false || obPending())
+    if (rec.onboarded === false || obPending()) {
         startOb(rec.name || who.name);
-    else
+    } else {
         afterAuth();
+    }
 
-    /* Provision the user's profile row and load shared plans after local auth state
-       has switched to the Supabase identity. Plan creation also rechecks this. */
-    syncSupabaseProfile().then(() => refreshSharedPlans({ render: false }))
-        .catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
+    /* Only completed profiles are synced here. Incomplete onboarding is written by
+       finishOb(), avoiding an out-of-order blank-profile upsert that could undo it. */
+    if (!obPending() && S.me.onboarded) {
+        syncSupabaseProfile(u)
+            .then(() => Promise.all([
+                refreshSharedPlans({ render: false }),
+                refreshSharedNotifications({ render: false })
+            ]))
+            .catch(e => console.warn('[supabase] profile/feed/notification sync pending:', e && e.code || e));
+    }
 }
 
 /* Register exactly one auth listener and consume any OAuth-return session exactly once. Safe to call repeatedly:
@@ -303,6 +335,72 @@ async function syncSupabaseProfile(user) {
     return user;
 }
 
+async function loadSupabaseProfile(user) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const result = await client
+        .from('profiles')
+        .select('id,username,name,email,gender,city,age_range,bio,photo_url,interests,onboarded,rel')
+        .eq('id', user.id)
+        .maybeSingle();
+    if (result.error) throw sharedPlanError('profile_load_failed', result.error);
+    return result.data || null;
+}
+
+function hydrateSupabaseProfile(rec, who, row) {
+    if (!rec || !row) return rec;
+    const savedProgress = rec.ob && typeof rec.ob === 'object' ? rec.ob : {};
+    /* Older releases saved completed onboarding locally but could leave profiles.onboarded
+       false on the server. For the same stable Supabase user ID, don't demote a complete
+       local profile just because that legacy server flag was never synced. */
+    const localWasComplete = !!rec.onboarded
+        && !!String(rec.name || '').trim()
+        && !!String(rec.username || '').trim()
+        && !!String(rec.city || '').trim()
+        && !!String(rec.gender || '').trim()
+        && !!String(rec.ageRange || '').trim();
+    const keepLocalCompletion = !row.onboarded && localWasComplete;
+    const value = (remote, local, fallback = '') =>
+        keepLocalCompletion ? String(local || fallback || '') :
+        remote == null ? String(local || fallback || '') : String(remote);
+    rec.sub = who.sub;
+    rec.email = String(who.email || row.email || rec.email || '').trim().toLowerCase();
+    rec.name = value(row.name, rec.name, who.name);
+    rec.username = value(row.username, rec.username);
+    rec.gender = value(row.gender, rec.gender);
+    rec.city = value(row.city, rec.city);
+    rec.ageRange = value(row.age_range, rec.ageRange);
+    rec.bio = value(row.bio, rec.bio);
+    rec.photo = value(row.photo_url, rec.photo, who.photo);
+    rec.interests = keepLocalCompletion
+        ? (Array.isArray(rec.interests) ? rec.interests : [])
+        : Array.isArray(row.interests) ? row.interests : (rec.interests || []);
+    rec.rel = keepLocalCompletion
+        ? (rec.rel && typeof rec.rel === 'object' ? rec.rel : {})
+        : row.rel && typeof row.rel === 'object' ? row.rel : (rec.rel || {});
+    const profileComplete = (!!row.onboarded || keepLocalCompletion)
+        && !!rec.name.trim()
+        && !!rec.username.trim()
+        && !!rec.city.trim()
+        && !!rec.gender.trim()
+        && !!rec.ageRange.trim();
+    rec.onboarded = profileComplete;
+    if (profileComplete) {
+        delete rec.ob;
+    } else {
+        rec.ob = {
+            ...savedProgress,
+            name: rec.name,
+            username: rec.username,
+            city: rec.city,
+            gender: rec.gender,
+            age: rec.ageRange,
+            interests: rec.interests
+        };
+    }
+    return rec;
+}
+
 function sharedPlanToRow(plan, uid) {
     const lat = plan.locLat == null || plan.locLat === '' ? null : Number(plan.locLat);
     const lng = plan.locLng == null || plan.locLng === '' ? null : Number(plan.locLng);
@@ -353,7 +451,7 @@ function sharedPlanFromRow(row, uid, memberships, requests) {
         locLat: row.loc_lat == null ? null : Number(row.loc_lat), locLng: row.loc_lng == null ? null : Number(row.loc_lng),
         locSource: row.loc_source || '', locPlace: row.loc_place || '', city: row.city || '',
         when: row.live ? 'LIVE NOW' : (row.when_at || ''), live: !!row.live, max: Number(row.max || row.size || 2),
-        members, who: row.who || 'Everyone', reqs: reqRows.map(r => ({ u: r.user_id, at: r.at })),
+        members, who: row.who || 'Everyone', reqs: reqRows.map(r => ({ u: r.user_id === uid ? 'me' : r.user_id, at: r.at })),
         status: row.status || 'open', day: row.day || 'Today', auto: !!row.auto,
         event: row.event_id || null, spot: row.spot || '', created: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
         _shared: true, _supabaseCreatorUid: row.creator
@@ -364,6 +462,7 @@ function clearSharedPlanCache() {
     if (typeof S === 'undefined') return;
     S.plans = (S.plans || []).filter(p => !p._shared);
     S.users = (S.users || []).filter(u => !u._supabaseProfile);
+    S.remoteNotifs = [];
     if (typeof save === 'function') save();
 }
 
@@ -416,20 +515,22 @@ async function refreshSharedPlans(options = {}) {
         const ids = new Set(remote.map(p => p.id));
         S.plans = (S.plans || []).filter(p => !p._shared && !ids.has(p.id)).concat(remote);
 
-        const creatorIds = [...new Set(rows.map(r => r.creator).filter(id => id && id !== user.id))];
-        if (creatorIds.length) {
-            const profilesResult = await client.from('profiles').select('id,username,name,email,gender,city,age_range,bio,photo_url,interests,onboarded,rel').in('id', creatorIds);
+        const creatorIds = rows.map(r => r.creator).filter(id => id && id !== user.id);
+        const requesterIds = requests.filter(r => r.state === 'pending').map(r => r.user_id).filter(id => id && id !== user.id);
+        const profileIdsToLoad = [...new Set([...creatorIds, ...requesterIds])];
+        if (profileIdsToLoad.length) {
+            const profilesResult = await client.from('profiles')
+                .select('id,username,name,email,gender,city,age_range,bio,photo_url,interests,onboarded,rel')
+                .in('id', profileIdsToLoad);
             if (profilesResult.error) throw sharedPlanError('plan_profiles_load_failed', profilesResult.error);
-            const profileIds = new Set((profilesResult.data || []).map(p => p.id));
-            S.users = (S.users || []).filter(u => !u._supabaseProfile || !creatorIds.includes(u.sub));
+            S.users = (S.users || []).filter(u => !u._supabaseProfile || !profileIdsToLoad.includes(u.sub));
             (profilesResult.data || []).forEach(p => S.users.push({
                 id: p.id, sub: p.id, _supabaseProfile: true, real: 0,
                 username: p.username || '', name: p.name || 'Someone', email: p.email || '', gender: p.gender || '',
                 city: p.city || '', ageRange: p.age_range || '', bio: p.bio || '', photo: p.photo_url || '',
                 interests: p.interests || [], onboarded: !!p.onboarded, rel: p.rel || {}
             }));
-            /* If RLS intentionally hides a profile, the plan remains visible but the UI uses its safe fallback. */
-            void profileIds;
+            /* RLS can hide a profile that is unrelated to the current plan; safe fallback remains available. */
         }
         if (typeof refreshSharedFeedbackSummaries === 'function') { try { await refreshSharedFeedbackSummaries(); } catch (e) { console.warn('[feedback] aggregate refresh failed:', e && e.code || e); } }
         if (typeof save === 'function') save();
@@ -442,3 +543,74 @@ async function refreshSharedPlans(options = {}) {
 
 
 
+
+
+/* Shared join notifications live in Supabase so they reach the right account on any device.
+   The SQL migration creates one host notification for each new pending request and one
+   requester notification when membership is accepted. */
+async function refreshSharedNotifications(options = {}) {
+    const client = getSupabaseClient();
+    if (!client) {
+        if (typeof S !== 'undefined') S.remoteNotifs = [];
+        return [];
+    }
+    const auth = await client.auth.getUser();
+    const user = auth && auth.data && auth.data.user;
+    if (auth.error) throw sharedPlanError('notification_auth_check_failed', auth.error);
+    if (!user) {
+        if (typeof S !== 'undefined') S.remoteNotifs = [];
+        return [];
+    }
+    const result = await client.from('squado_notifications')
+        .select('id,recipient,actor,kind,plan_id,title,body,created_at,read_at')
+        .eq('recipient', user.id)
+        .order('created_at', { ascending: false })
+        .limit(100);
+    if (result.error) throw sharedPlanError('notification_load_failed', result.error);
+    const rows = (result.data || []).map(row => ({
+        id: 'shared-notif-' + row.id,
+        _sharedNotificationId: row.id,
+        to: 'me',
+        type: row.kind,
+        planId: row.plan_id,
+        userId: row.actor === user.id ? 'me' : row.actor,
+        ic: row.kind === 'join_request' ? 'user-plus' : 'party-popper',
+        c: row.kind === 'join_request' ? 'pink' : 'green',
+        t: row.title || 'Squado update',
+        b: row.body || '',
+        at: row.created_at ? Date.parse(row.created_at) : Date.now(),
+        u: !row.read_at
+    }));
+    /* Prevent a delayed response for a previous account from leaking into a switched session. */
+    const current = await client.auth.getUser();
+    if (!current.error && current.data && current.data.user && current.data.user.id === user.id
+        && typeof S !== 'undefined' && S.me && S.me.sub === user.id) {
+        S.remoteNotifs = rows;
+        if (typeof save === 'function') save();
+        if (options.render !== false && typeof render === 'function') render();
+    }
+    return rows;
+}
+
+async function markSharedNotificationsRead(ids) {
+    const client = getSupabaseClient();
+    if (!client) return;
+    const auth = await client.auth.getUser();
+    const user = auth && auth.data && auth.data.user;
+    if (auth.error) throw sharedPlanError('notification_auth_check_failed', auth.error);
+    if (!user) return;
+    const unreadIds = Array.isArray(ids) && ids.length
+        ? ids
+        : (S.remoteNotifs || []).filter(n => n.u && n._sharedNotificationId).map(n => n._sharedNotificationId);
+    if (!unreadIds.length) return;
+    const result = await client.from('squado_notifications')
+        .update({ read_at: new Date().toISOString() })
+        .eq('recipient', user.id)
+        .in('id', unreadIds);
+    if (result.error) throw sharedPlanError('notification_mark_read_failed', result.error);
+    const set = new Set(unreadIds);
+    (S.remoteNotifs || []).forEach(n => {
+        if (set.has(n._sharedNotificationId)) n.u = 0;
+    });
+    if (typeof save === 'function') save();
+}
