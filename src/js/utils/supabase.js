@@ -133,8 +133,10 @@ async function handleSupabaseUser(session, attempt) {
     /* already signed in as this exact identity: nothing to do (idempotent for repeated INITIAL_SESSION/SIGNED_IN) */
     if (S.me && !S.me.guest && S.me.sub === who.sub) {
         normalizeOAuthHash();
-        syncSupabaseProfile().then(() => refreshSharedPlans({ render: false }))
-            .catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
+        syncSupabaseProfile().then(() => {
+            refreshSharedPlans({ render: false }).catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
+            if (typeof refreshPublishedEvents === 'function') refreshPublishedEvents();
+        }).catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
         return;
     }
 
@@ -171,8 +173,10 @@ async function handleSupabaseUser(session, attempt) {
 
     /* Provision the user's profile row and load shared plans after local auth state
        has switched to the Supabase identity. Plan creation also rechecks this. */
-    syncSupabaseProfile().then(() => refreshSharedPlans({ render: false }))
-        .catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
+    syncSupabaseProfile().then(() => {
+        refreshSharedPlans({ render: false }).catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
+        if (typeof refreshPublishedEvents === 'function') refreshPublishedEvents();
+    }).catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
 }
 
 /* Register exactly one auth listener and consume any OAuth-return session exactly once. Safe to call repeatedly:
