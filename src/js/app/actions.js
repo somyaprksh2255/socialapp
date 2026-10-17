@@ -345,21 +345,50 @@ const A = {
         save();
         modal(`<h2 style="margin-top:0">Request sent ⏳</h2><p class="mut">You're not in yet. The host decides after seeing your profile.</p><button class="btn pink wide" data-a="close">Cool</button>`);
     },
-    unreq(e) {
+    async unreq(e) {
         const p = pl(e.dataset.v);
-        if (!p || membership(p, 'me') != 'pending')
-            return toast('That request is no longer there.');
-        if (!memCancelRequest(p, 'me').ok)
-            return toast('That request is no longer there.');
-        resolveJoinNotifs(p.id, 'me');
-        save();
+        if (!p || membership(p, 'me') != 'pending') return toast('That request is no longer there.');
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            try {
+                const client = getSupabaseClient();
+                if (!client) throw new Error('supabase_not_configured');
+                const result = await client.rpc('cancel_shared_plan_join', { p_plan_id: p.id });
+                if (result.error) throw result.error;
+                if (!['ok','not_pending'].includes(result.data && result.data.status)) throw new Error('request_not_cancelled');
+                await refreshSharedPlans({ render: false });
+                modal(''); render(); toast('Join request cancelled.');
+                return;
+            } catch (err) {
+                console.error('[join] cancel failed:', err && (err.code || err.message) || err);
+                return toast('Could not cancel this request. Please try again.');
+            }
+        }
+        if (!memCancelRequest(p, 'me').ok) return toast('That request is no longer there.');
+        resolveJoinNotifs(p.id, 'me'); save();
     },
-    accept(e) {
+    async accept(e) {
         const parts = (e.dataset.v || '').split('|');
         const p = pl(e.dataset.k || parts[0]);
         const u = e.dataset.k ? e.dataset.v : parts[1];
-        if (!p || !idOk(u))
-            return toast('This join request is no longer available.');
+        if (!p || !idOk(u)) return toast('This join request is no longer available.');
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            try {
+                const client = getSupabaseClient();
+                if (!client) throw new Error('supabase_not_configured');
+                const result = await client.rpc('decide_shared_plan_join', { p_plan_id: p.id, p_user_id: u, p_approve: true });
+                if (result.error) throw result.error;
+                const status = result.data && result.data.status;
+                if (status !== 'accepted') {
+                    const msg = { forbidden:'Only the host can approve requests.',closed:'This plan is no longer open.',full:'Squad full 🔥 Free up a spot to approve this request.',blocked:'You or this person has blocked the other account.',not_pending:'This request is no longer pending.' };
+                    return toast(msg[status] || 'This join request could not be approved.');
+                }
+                await refreshSharedPlans({ render: false });
+                modal(''); toast('Request approved 🫡'); render(); return;
+            } catch (err) {
+                console.error('[join] approval failed:', err && (err.code || err.message) || err);
+                return toast('Could not approve this request. Please try again.');
+            }
+        }
         const r = memApprove(p, u, 'me');
         if (!r.ok)
             return toast({
@@ -391,12 +420,26 @@ const A = {
         toast(usr(u).name + ' is in 🫡');
         render();
     },
-    reject(e) {
+    async reject(e) {
         const parts = (e.dataset.v || '').split('|');
         const p = pl(e.dataset.k || parts[0]);
         const u = e.dataset.k ? e.dataset.v : parts[1];
-        if (!p || !idOk(u))
-            return toast('This join request is no longer available.');
+        if (!p || !idOk(u)) return toast('This join request is no longer available.');
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            try {
+                const client = getSupabaseClient();
+                if (!client) throw new Error('supabase_not_configured');
+                const result = await client.rpc('decide_shared_plan_join', { p_plan_id: p.id, p_user_id: u, p_approve: false });
+                if (result.error) throw result.error;
+                const status = result.data && result.data.status;
+                if (status !== 'rejected') return toast(status === 'forbidden' ? 'Only the host can decline requests.' : 'This join request is no longer available.');
+                await refreshSharedPlans({ render: false });
+                modal(''); toast('Passed 🫶'); render(); return;
+            } catch (err) {
+                console.error('[join] rejection failed:', err && (err.code || err.message) || err);
+                return toast('Could not decline this request. Please try again.');
+            }
+        }
         const r = memReject(p, u, 'me');
         if (!r.ok)
             return toast({
