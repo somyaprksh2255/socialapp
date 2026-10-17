@@ -621,8 +621,15 @@ const A = {
     },
     /* host confirms the meetup happened and ended. Host-only: the host's confirmation alone completes it (no attendee
        quorum), as long as no verified attendee has an open dispute. This never fabricates attendance records. */
-    end(e) {
+    async end(e) {
         const p = pl(e.dataset.v);
+        if (!p) return;
+        /* Preserve the local state so a failed server sync cannot leave a shared plan looking
+           completed only on the host's browser. */
+        const beforePlan = p._shared ? JSON.parse(JSON.stringify(p)) : null;
+        const beforeAttendance = p._shared
+            ? (S.attendance || []).filter(a => a.planId === p.id).map(a => JSON.parse(JSON.stringify(a)))
+            : [];
         const r = compHost(p);
 
         if (r == 'forbidden' || r == 'state')
@@ -630,6 +637,19 @@ const A = {
 
         if (r == 'save')
             return toast('We couldn\'t save that. Please try again.');
+
+        if (r == 'completed' && p._shared) {
+            try {
+                await completeSharedPlanRemote(p.id);
+            } catch (error) {
+                Object.keys(p).forEach(k => delete p[k]);
+                Object.assign(p, beforePlan);
+                S.attendance = (S.attendance || []).filter(a => a.planId !== p.id).concat(beforeAttendance);
+                save();
+                render();
+                return toast('Could not sync completion online. Check your connection and try again.');
+            }
+        }
 
         if (r == 'completed') {
             attFinish(p);
