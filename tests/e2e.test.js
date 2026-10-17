@@ -37,7 +37,7 @@ const supabase = read('src/js/utils/supabase.js');
 const qrMigration = read('supabase/migrations/0018_qr_feedback_shared_completion.sql');
 const chatMigration = read('supabase/migrations/0017_shared_chat_messages.sql');
 
-assert(/function eventVisibleInCurrentCity/.test(selectors), 'Events need a shared city-visibility predicate');
+assert(/const eventVisibleInCurrentCity\s*=/.test(selectors), 'Events need a shared city-visibility predicate');
 assert(/\.filter\(eventVisibleInCurrentCity\)/.test(explore), 'Discover Events must be filtered to the selected city');
 assert(/\.filter\(eventVisibleInCurrentCity\)/.test(home), 'Home Events must be filtered to the selected city');
 assert(/!!selected && !!actual && selected === actual/.test(selectors), 'An event with no city must not leak to every city feed');
