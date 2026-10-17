@@ -221,7 +221,7 @@ const HOST_SCAN_MSG = {
     checked_in: ['Checked in ✅', 'is now marked present. Point the camera at the next member\'s QR.'],
     duplicate: ['Already checked in', 'This member was already marked present. Nothing was added twice.'],
     self: ['That\'s your own QR', 'As the host you\'re already counted. Scan a member\'s personal QR instead.'],
-    unknown: ['That QR doesn\'t match anyone', 'It isn\'t a Squado personal QR for someone this device knows. On this device only accounts that signed in here can be matched (there\'s no server to check against).'],
+    unknown: ['That QR doesn\'t match anyone', 'The server couldn\'t find a Squado profile for this QR. Ask them to sign in and finish their profile, then try again.'],
     notmember: ['Not an accepted member', 'They\'re not an accepted member of this squad, so they can\'t be checked in. Accept their join request first.'],
     state: ['This plan isn\'t open for check-in', 'Check-in only works while the plan is open (not cancelled or ended).'],
     forbidden: ['Only the host can scan people in', 'You\'re not the host of this plan.'],
