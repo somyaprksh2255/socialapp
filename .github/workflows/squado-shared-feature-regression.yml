@@ -30,3 +30,6 @@ jobs:
 
       - name: Test app workflows and shared chat, QR, city and feedback paths
         run: node tests/e2e.test.js
+
+      - name: Test authoritative QR attendance endpoint
+        run: node tests/attendance.server.test.js
