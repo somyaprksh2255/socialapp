@@ -645,6 +645,8 @@ async function refreshSharedChatMessages(planId, options = {}) {
         const rows = result.data || [];
         const old = Array.isArray(S.msgs[key]) ? S.msgs[key] : [];
         const oldById = new Map(old.filter(m => m && m._remoteId).map(m => [m._remoteId, m]));
+        const signature = list => JSON.stringify((list || []).map(m => [m._remoteId || '', m.by || '', m.x || '', m.r || '', m.mpath || '']));
+        const oldSignature = signature(old);
         const ids = rows.map(row => row.id).filter(Boolean);
         let reactionRows = [];
         if (ids.length) {
@@ -675,9 +677,10 @@ async function refreshSharedChatMessages(planId, options = {}) {
         if (current.error || !current.data || !current.data.user ||
             current.data.user.id !== user.id || !S.me || S.me.guest || S.me.sub !== user.id)
             return mapped;
+        const changed = oldSignature !== signature(mapped);
         S.msgs[key] = mapped;
         if (typeof save === 'function') save();
-        if (options.render !== false && location.hash === '#/gc/' + key && typeof render === 'function') {
+        if (changed && options.render !== false && location.hash === '#/gc/' + key && typeof render === 'function') {
             render();
             if (typeof scrollTo === 'function') scrollTo(0, 1e6);
         }
