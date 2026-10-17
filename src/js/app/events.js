@@ -127,16 +127,29 @@ async function refreshPublishedEvents() {
     const cfg = window.SQUADO_CONFIG || {};
     const base = String(cfg.apiBaseUrl || '').replace(/\/$/, '');
     if (!base || typeof S === 'undefined' || typeof save !== 'function') return;
+    /* A guest must never retain a previously cached real Event list. */
+    if (!S.me || S.me.guest || typeof supabaseAccessToken !== 'function') {
+        S.events = [];
+        save();
+        return [];
+    }
     try {
-        const res = await fetch(base + '/api/events', { headers: { Accept: 'application/json' } });
-        if (!res.ok) return;
+        const token = await supabaseAccessToken();
+        if (!token) { S.events = []; save(); return []; }
+        const res = await fetch(base + '/api/events', {
+            headers: { Accept: 'application/json', Authorization: 'Bearer ' + token }
+        });
+        if (!res.ok) {
+            if (res.status === 401 || res.status === 403) { S.events = []; save(); }
+            return [];
+        }
         const data = await res.json();
         const remote = Array.isArray(data.events) ? data.events : [];
         const byId = new Map(remote.map(row => [row.id, { ...(row.payload || {}), id: row.id, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at, serverManaged: true }]));
-        /* Published Events are backend-authoritative. Do not surface local-only or stale
-         * published records as if they had been approved by an admin. */
+        /* The API returns only published Events for this authenticated profile's city. */
         S.events = [...byId.values()];
         save();
         if (typeof render === 'function') render();
-    } catch (_) { /* keep local UI available if the optional API is unreachable */ }
+        return S.events;
+    } catch (_) { return []; }
 }
