@@ -45,13 +45,14 @@ const vis = () => {
 };
 
 const visibleEvents = () => {
-    if (tier() === 'guest') return [];
-    const selected = viewCity();
-    if (!selected) return [];
+    /* Events belong to the user's saved profile city, not a temporary discovery-city filter. */
+    if (tier() !== 'ready') return [];
+    const profileCity = String(S.me && S.me.city || '').trim();
+    if (!profileCity) return [];
     return (Array.isArray(S.events) ? S.events : []).filter(e =>
         e &&
         e.status === 'published' &&
-        sameCity(e.city || e.locCity || cityOfLoc(e.loc), selected)
+        sameCity(e.city || e.locCity || cityOfLoc(e.loc), profileCity)
     );
 };
 
