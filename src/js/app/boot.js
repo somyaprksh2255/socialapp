@@ -34,8 +34,12 @@ catch (e) { document.documentElement.dataset.theme = 'light'; }
 addEventListener('hashchange', () => {
     modal('');
     /* opening a squad chat (#/gc/:id): re-mint the signed URLs for any stored private chat media */
-    if (typeof supabaseConfigured === 'function' && supabaseConfigured() && location.hash.indexOf('#/gc/') === 0 && typeof A !== 'undefined' && A.refreshChatMedia)
-        A.refreshChatMedia(location.hash.slice('#/gc/'.length));
+    if (typeof supabaseConfigured === 'function' && supabaseConfigured() && location.hash.indexOf('#/gc/') === 0) {
+        const chatId = location.hash.slice('#/gc/'.length);
+        if (typeof A !== 'undefined' && A.refreshChatMedia) A.refreshChatMedia(chatId);
+        if (typeof refreshSharedChatMessages === 'function')
+            refreshSharedChatMessages(chatId).catch(e => console.warn('[chat] initial load failed:', e && e.code || e));
+    }
     render();
     /* Refresh published Events as users navigate so newly published admin Events become visible
        without requiring a hard reload. */
@@ -55,6 +59,15 @@ if (typeof initSupabase === 'function' && typeof supabaseConfigured === 'functio
 
 render();
 if (typeof refreshPublishedEvents === 'function') refreshPublishedEvents();
+
+/* Shared group messages are fetched while the chat is open. No fake polling for local-only demo groups. */
+setInterval(() => {
+    if (!S.me || S.me.guest || !location.hash || location.hash.indexOf('#/gc/') !== 0) return;
+    const id = location.hash.slice('#/gc/'.length);
+    const p = typeof pl === 'function' ? pl(id) : null;
+    if (p && p._shared && typeof refreshSharedChatMessages === 'function')
+        refreshSharedChatMessages(id).catch(e => console.warn('[chat] refresh failed:', e && e.code || e));
+}, 5000);
 
 /* Shared plans are server-owned; refresh across users/tabs without replacing local UI state. */
 setInterval(() => {
