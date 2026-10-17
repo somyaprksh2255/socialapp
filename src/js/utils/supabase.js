@@ -517,7 +517,8 @@ async function refreshSharedPlans(options = {}) {
 
         const creatorIds = rows.map(r => r.creator).filter(id => id && id !== user.id);
         const requesterIds = requests.filter(r => r.state === 'pending').map(r => r.user_id).filter(id => id && id !== user.id);
-        const profileIdsToLoad = [...new Set([...creatorIds, ...requesterIds])];
+        const memberIds = memberships.filter(m => m.state === 'member').map(m => m.user_id).filter(id => id && id !== user.id);
+        const profileIdsToLoad = [...new Set([...creatorIds, ...requesterIds, ...memberIds])];
         if (profileIdsToLoad.length) {
             const profilesResult = await client.from('profiles')
                 .select('id,username,name,email,gender,city,age_range,bio,photo_url,interests,onboarded,rel')
@@ -532,6 +533,7 @@ async function refreshSharedPlans(options = {}) {
             }));
             /* RLS can hide a profile that is unrelated to the current plan; safe fallback remains available. */
         }
+        if (typeof refreshSharedAttendance === 'function') { try { await refreshSharedAttendance({ render: false }); } catch (e) { console.warn('[attendance] shared refresh failed:', e && e.code || e); } }
         if (typeof refreshSharedFeedbackSummaries === 'function') { try { await refreshSharedFeedbackSummaries(); } catch (e) { console.warn('[feedback] aggregate refresh failed:', e && e.code || e); } }
         if (typeof save === 'function') save();
         if (options.render !== false && typeof render === 'function') render();
@@ -544,6 +546,189 @@ async function refreshSharedPlans(options = {}) {
 
 
 
+
+/* Shared group chat: the database is authoritative for cross-account messages.
+   The messages/message_reactions tables are protected by the migration's accepted-member RLS policies. */
+const sharedChatRefreshes = new Map();
+
+function chatTimeLabel(value) {
+    const d = value ? new Date(value) : new Date();
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function sharedChatMessageFromRow(row, uid, cached) {
+    const kind = row.kind || 'text';
+    const m = {
+        _remoteId: row.id,
+        _shared: true,
+        by: row.by === uid ? 'me' : row.by,
+        x: row.text || '',
+        t: chatTimeLabel(row.created_at),
+        mpath: row.media_path || '',
+        loc: row.loc || null,
+        r: '',
+        _myReaction: ''
+    };
+    if (kind === 'sys') m.sys = 1;
+    else if (kind !== 'text') m.type = kind;
+    if (cached && cached.mpath === m.mpath && cached.src) m.src = cached.src;
+    return m;
+}
+
+async function publishSharedChatMessage(planId, draft) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const plan = typeof pl === 'function' ? pl(planId) : null;
+    if (!plan || !plan._shared || typeof groupAccess !== 'function' || !groupAccess(plan))
+        throw sharedPlanError('chat_forbidden');
+    const user = await currentSupabaseUser();
+    if (!S.me || S.me.guest || S.me.sub !== user.id)
+        throw sharedPlanError('chat_authentication_required');
+    const kind = String(draft && draft.kind || 'text');
+    if (!['text', 'photo', 'location', 'photo-location'].includes(kind))
+        throw sharedPlanError('chat_invalid_message');
+    const body = {
+        plan_id: String(planId),
+        by: user.id,
+        kind,
+        text: String(draft && draft.text || '').slice(0, 300) || null,
+        media_path: String(draft && draft.mediaPath || '') || null,
+        loc: draft && draft.loc != null ? draft.loc : null
+    };
+    if (kind === 'text' && !String(body.text || '').trim())
+        throw sharedPlanError('chat_empty_message');
+    const result = await client.from('messages')
+        .insert(body)
+        .select('id,plan_id,by,kind,text,media_path,loc,created_at')
+        .single();
+    if (result.error || !result.data)
+        throw sharedPlanError('chat_message_send_failed', result.error);
+    return sharedChatMessageFromRow(result.data, user.id, null);
+}
+
+async function toggleSharedMessageReaction(messageId, currentEmoji) {
+    const client = getSupabaseClient();
+    if (!client) throw sharedPlanError('supabase_not_configured');
+    const user = await currentSupabaseUser();
+    const reactions = ['🔥', '🕺', '😭', ''];
+    const next = reactions[(Math.max(-1, reactions.indexOf(currentEmoji)) + 1) % reactions.length];
+    if (!next) {
+        const removed = await client.from('message_reactions').delete()
+            .eq('message_id', messageId).eq('user_id', user.id);
+        if (removed.error) throw sharedPlanError('chat_reaction_save_failed', removed.error);
+    } else {
+        const saved = await client.from('message_reactions').upsert(
+            { message_id: messageId, user_id: user.id, emoji: next },
+            { onConflict: 'message_id,user_id' }
+        );
+        if (saved.error) throw sharedPlanError('chat_reaction_save_failed', saved.error);
+    }
+    return next;
+}
+
+async function refreshSharedChatMessages(planId, options = {}) {
+    const key = String(planId || '');
+    if (sharedChatRefreshes.has(key)) return sharedChatRefreshes.get(key);
+    const client = getSupabaseClient();
+    const plan = typeof pl === 'function' ? pl(key) : null;
+    if (!client || !plan || !plan._shared || typeof groupAccess !== 'function' || !groupAccess(plan))
+        return [];
+    const task = (async () => {
+        const user = await currentSupabaseUser();
+        if (!S.me || S.me.guest || S.me.sub !== user.id) return [];
+        const result = await client.from('messages')
+            .select('id,plan_id,by,kind,text,media_path,loc,created_at')
+            .eq('plan_id', key)
+            .order('created_at', { ascending: true })
+            .limit(500);
+        if (result.error) throw sharedPlanError('chat_load_failed', result.error);
+        const rows = result.data || [];
+        const old = Array.isArray(S.msgs[key]) ? S.msgs[key] : [];
+        const oldById = new Map(old.filter(m => m && m._remoteId).map(m => [m._remoteId, m]));
+        const ids = rows.map(row => row.id).filter(Boolean);
+        let reactionRows = [];
+        if (ids.length) {
+            const reactions = await client.from('message_reactions')
+                .select('message_id,user_id,emoji')
+                .in('message_id', ids);
+            if (reactions.error) throw sharedPlanError('chat_reaction_load_failed', reactions.error);
+            reactionRows = reactions.data || [];
+        }
+        const byMessage = new Map();
+        reactionRows.forEach(r => {
+            if (!byMessage.has(r.message_id)) byMessage.set(r.message_id, []);
+            byMessage.get(r.message_id).push(r);
+        });
+        const mapped = [];
+        for (const row of rows) {
+            const m = sharedChatMessageFromRow(row, user.id, oldById.get(row.id));
+            const rs = byMessage.get(row.id) || [];
+            m.r = rs.map(x => x.emoji).join('');
+            m._myReaction = (rs.find(x => x.user_id === user.id) || {}).emoji || '';
+            if (m.mpath && !m.src && typeof signChatMedia === 'function') {
+                try { m.src = await signChatMedia(m.mpath); }
+                catch (_) { m.src = ''; }
+            }
+            mapped.push(m);
+        }
+        const current = await client.auth.getUser();
+        if (current.error || !current.data || !current.data.user ||
+            current.data.user.id !== user.id || !S.me || S.me.guest || S.me.sub !== user.id)
+            return mapped;
+        S.msgs[key] = mapped;
+        if (typeof save === 'function') save();
+        if (options.render !== false && location.hash === '#/gc/' + key && typeof render === 'function') {
+            render();
+            if (typeof scrollTo === 'function') scrollTo(0, 1e6);
+        }
+        return mapped;
+    })();
+    sharedChatRefreshes.set(key, task);
+    try { return await task; }
+    finally { if (sharedChatRefreshes.get(key) === task) sharedChatRefreshes.delete(key); }
+}
+
+/* Attendance written by the protected server scanner must be read back on each attendee's device.
+   S.attendance is only a local UI cache; Supabase rows override cache entries with the same plan/member. */
+let sharedAttendanceRefresh = null;
+async function refreshSharedAttendance(options = {}) {
+    if (sharedAttendanceRefresh) return sharedAttendanceRefresh;
+    const client = getSupabaseClient();
+    if (!client) return [];
+    sharedAttendanceRefresh = (async () => {
+        const user = await currentSupabaseUser();
+        if (!S.me || S.me.guest || S.me.sub !== user.id) return [];
+        const planIds = [...new Set((S.plans || []).filter(p => p && p._shared).map(p => p.id))];
+        if (!planIds.length) return [];
+        const result = await client.from('attendance')
+            .select('id,plan_id,uid,status,method,audit,dispute,created_at,updated_at')
+            .in('plan_id', planIds)
+            .limit(1000);
+        if (result.error) throw sharedPlanError('attendance_load_failed', result.error);
+        const remote = (result.data || []).map(row => ({
+            id: row.id,
+            planId: row.plan_id,
+            uid: row.uid === user.id ? 'me' : row.uid,
+            status: row.status || 'present',
+            method: row.method || 'in_app_scanner',
+            at: row.updated_at ? Date.parse(row.updated_at) : (row.created_at ? Date.parse(row.created_at) : Date.now()),
+            token: '',
+            audit: Array.isArray(row.audit) ? row.audit : [],
+            dispute: row.dispute || undefined,
+            _sharedAttendance: true
+        }));
+        const keyOf = a => String(a.planId) + '|' + String(a.uid);
+        const remoteKeys = new Set(remote.map(keyOf));
+        S.attendance = (Array.isArray(S.attendance) ? S.attendance : [])
+            .filter(a => !remoteKeys.has(keyOf(a)))
+            .concat(remote);
+        if (typeof save === 'function') save();
+        if (options.render !== false && typeof render === 'function') render();
+        return remote;
+    })();
+    try { return await sharedAttendanceRefresh; }
+    finally { sharedAttendanceRefresh = null; }
+}
 
 /* Shared join notifications live in Supabase so they reach the right account on any device.
    The SQL migration creates one host notification for each new pending request and one
