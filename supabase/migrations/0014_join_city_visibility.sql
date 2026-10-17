@@ -14,6 +14,10 @@ using (
   creator = auth.uid()
   or public.is_member(id)
   or (
+    creator = auth.uid()
+    and status = 'open'
+  )
+  or (
     status = 'open'
     and nullif(btrim(city), '') is not null
     and exists (
