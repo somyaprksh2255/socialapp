@@ -163,8 +163,11 @@ function attParse(text) {
 
     const c = /#\/checkin\/([\w.~%-]+)\/([0-9a-f]{32})\s*$/i.exec(s);
 
-    if (c)
-        return { kind: 'checkin', id: decodeURIComponent(c[1]), token: c[2].toLowerCase() };
+    if (c) {
+        let id;
+        try { id = decodeURIComponent(c[1]); } catch (_) { return null; }
+        return idOk(id) ? { kind: 'checkin', id, token: c[2].toLowerCase() } : null;
+    }
 
     const u = /#\/user\/([A-Za-z0-9_%.~-]+)\s*$/.exec(s);
 
@@ -346,7 +349,7 @@ async function scanHandle(text) {
         return;
 
     if (!x || x.kind != 'checkin') {
-        modal(scanSheet('', ''));
+        /* Avoid two immediate modal swaps: each modal swap tears down the camera. */
         return modal(scanResult('invalid'));
     }
 
@@ -416,9 +419,11 @@ async function scanStart() {
     if (!nav || !nav.mediaDevices || !nav.mediaDevices.getUserMedia)
         return modal(sheet('', SCAN_ERR.unsupported));
 
-    const hasDetector = typeof BarcodeDetector != 'undefined';
-
-    if (!hasDetector && typeof jsQR == 'undefined')
+    let det = null;
+    if (typeof BarcodeDetector !== 'undefined') {
+        try { det = new BarcodeDetector({ formats: ['qr_code'] }); } catch (_) { det = null; }
+    }
+    if (!det && typeof jsQR !== 'function')
         return modal(sheet('', SCAN_ERR.nodecoder));
 
     let stream;
@@ -453,8 +458,9 @@ async function scanStart() {
     }
     catch (x) { }
 
-    const det = hasDetector ? new BarcodeDetector({ formats: ['qr_code'] }) : null;
     const cv = document.createElement('canvas');
+    let lastHandledText = '';
+    let emptySince = 0;
 
     const tick = async () => {
         if (O.tok != tok)
@@ -463,43 +469,51 @@ async function scanStart() {
         let text = '';
 
         try {
-            if (det) {
-                const r = await det.detect(v);
-
-                text = r && r[0] ? r[0].rawValue : '';
+            if (det && v.videoWidth) {
+                try {
+                    const found = await det.detect(v);
+                    text = found && found[0] ? found[0].rawValue : '';
+                } catch (_) {
+                    /* BarcodeDetector exists in some browsers but fails on actual streams; switch to jsQR. */
+                    det = null;
+                }
             }
-            else if (v.videoWidth) {
-                cv.width = v.videoWidth;
-                cv.height = v.videoHeight;
-
-                const cx = cv.getContext('2d');
-
-                cx.drawImage(v, 0, 0);
-
-                const d = cx.getImageData(0, 0, cv.width, cv.height);
-                const r = jsQR(d.data, d.width, d.height);
-
-                text = r ? r.data : '';
+            if (!text && typeof jsQR === 'function' && v.videoWidth) {
+                const scale = Math.min(1, 800 / v.videoWidth);
+                const width = Math.max(1, Math.round(v.videoWidth * scale));
+                const height = Math.max(1, Math.round(v.videoHeight * scale));
+                if (cv.width !== width || cv.height !== height) {
+                    cv.width = width;
+                    cv.height = height;
+                }
+                const cx = cv.getContext('2d', { willReadFrequently: true });
+                cx.drawImage(v, 0, 0, width, height);
+                const pixels = cx.getImageData(0, 0, width, height);
+                const found = jsQR(pixels.data, pixels.width, pixels.height);
+                text = found ? found.data : '';
             }
-        }
-        catch (x) { }
+        } catch (_) { /* ignore a bad frame and keep scanning */ }
 
         if (O.tok != tok)
             return;
 
+        text = String(text || '').trim();
         if (text) {
-            /* skip decoding a result while a check-in is in flight; scanHandle's own busy-gate also guards re-entry */
-            if (!O.scan.busy)
-                scanHandle(text);   /* async; fire-and-forget here — correctness rests on the busy flag */
-
-            /* host scanner stays live for the next member (keep polling even while busy); member scanner stops */
-            if (O.scan.hostPlan && O.tok == tok)
-                return setTimeout(tick, 250);
-
-            return;
+            emptySince = 0;
+            if (text !== lastHandledText && !O.scan.busy) {
+                lastHandledText = text;
+                scanHandle(text);
+            }
+        } else {
+            if (!emptySince) emptySince = Date.now();
+            if (Date.now() - emptySince > 700) lastHandledText = '';
         }
 
-        setTimeout(tick, 250);
+        /* Keep the host camera open; member scanner ends when scanHandle swaps the modal. */
+        if (O.scan.hostPlan)
+            return setTimeout(tick, 250);
+        if (!text)
+            return setTimeout(tick, 250);
     };
 
     tick();
