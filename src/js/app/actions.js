@@ -908,7 +908,7 @@ const A = {
                 const by = o[Math.random() * o.length | 0];
                 msgs(id).push({
                     by,
-                    x: ['I\\'m down 🕺', 'omw 😭', 'Where exactly?', 'Full send 🔥', 'Save me a spot!'][Math.random() * 5 | 0],
+                    x: ['I\'m down 🕺', 'omw 😭', 'Where exactly?', 'Full send 🔥', 'Save me a spot!'][Math.random() * 5 | 0],
                     t: hm()
                 });
                 save();
