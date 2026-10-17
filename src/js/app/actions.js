@@ -309,8 +309,45 @@ const A = {
                 if (result.error) throw result.error;
                 const status = result.data && result.data.status;
                 if (status === 'pending' || status === 'accepted') {
-                    await refreshSharedPlans({ render: false });
+                    /* The RPC is authoritative. Reflect its result locally before doing any secondary reads,
+                       so a successful write never looks like a no-op if the feed refresh is delayed or fails. */
+                    const cachedPlan = (S.plans || []).find(x => String(x.id) === String(p.id));
+                    const statePlan = cachedPlan || p;
+                    if (status === 'accepted') {
+                        statePlan.members = [...new Set([...(statePlan.members || []), 'me'])];
+                        statePlan.reqs = (statePlan.reqs || []).filter(r => r.u !== 'me');
+                        statePlan.memberCount = Math.max(Number(statePlan.memberCount || 0), statePlan.members.length);
+                    } else {
+                        statePlan.reqs = (statePlan.reqs || []).filter(r => r.u !== 'me');
+                        statePlan.reqs.push({ u: 'me', at: new Date().toISOString() });
+                    }
+                    if (!cachedPlan) {
+                        S.plans = S.plans || [];
+                        S.plans.push(statePlan);
+                    }
+                    save();
+
+                    /* Refresh the server-owned view, but don't turn a successful RPC into a failed UI action
+                       because a follow-up SELECT failed. The SELECT policy is also reinforced in migration 0015. */
+                    try {
+                        await refreshSharedPlans({ render: false });
+                    } catch (refreshErr) {
+                        console.warn('[join] request saved; shared-plan refresh failed:', refreshErr && (refreshErr.code || refreshErr.message) || refreshErr);
+                    }
+
+                    const refreshedPlan = (S.plans || []).find(x => String(x.id) === String(p.id));
+                    const finalPlan = refreshedPlan || statePlan;
+                    if (status === 'accepted') {
+                        finalPlan.members = [...new Set([...(finalPlan.members || []), 'me'])];
+                        finalPlan.reqs = (finalPlan.reqs || []).filter(r => r.u !== 'me');
+                        finalPlan.memberCount = Math.max(Number(finalPlan.memberCount || 0), finalPlan.members.length);
+                    } else if (!(finalPlan.reqs || []).some(r => r.u === 'me')) {
+                        finalPlan.reqs = [...(finalPlan.reqs || []), { u: 'me', at: new Date().toISOString() }];
+                    }
+                    save();
                     modal('');
+                    render();
+
                     if (status === 'accepted') {
                         confetti();
                         return modal(`<div class="authst"><span class="okc">${I('check', '26px')}</span><h2>You're in 🎉</h2><p class="mut">Your membership is saved. The group chat is unlocked.</p></div><a class="btn pink wide" href="#/gc/${p.id}" data-a="close">Enter the GC</a>`);
