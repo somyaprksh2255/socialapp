@@ -133,8 +133,10 @@ async function handleSupabaseUser(session, attempt) {
     /* already signed in as this exact identity: nothing to do (idempotent for repeated INITIAL_SESSION/SIGNED_IN) */
     if (S.me && !S.me.guest && S.me.sub === who.sub) {
         normalizeOAuthHash();
-        syncSupabaseProfile().then(() => refreshSharedPlans({ render: false }))
-            .catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
+        syncSupabaseProfile().then(() => {
+            refreshSharedPlans({ render: false }).catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
+            if (typeof refreshPublishedEvents === 'function') refreshPublishedEvents();
+        }).catch(e => console.warn('[plans] initial profile/feed sync failed:', e && e.code || e));
         return;
     }
 
@@ -171,8 +173,10 @@ async function handleSupabaseUser(session, attempt) {
 
     /* Provision the user's profile row and load shared plans after local auth state
        has switched to the Supabase identity. Plan creation also rechecks this. */
-    syncSupabaseProfile().then(() => refreshSharedPlans({ render: false }))
-        .catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
+    syncSupabaseProfile().then(() => {
+        refreshSharedPlans({ render: false }).catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
+        if (typeof refreshPublishedEvents === 'function') refreshPublishedEvents();
+    }).catch(e => console.warn('[plans] profile/feed sync pending:', e && e.code || e));
 }
 
 /* Register exactly one auth listener and consume any OAuth-return session exactly once. Safe to call repeatedly:
@@ -353,7 +357,7 @@ function sharedPlanFromRow(row, uid, memberships, requests) {
         locLat: row.loc_lat == null ? null : Number(row.loc_lat), locLng: row.loc_lng == null ? null : Number(row.loc_lng),
         locSource: row.loc_source || '', locPlace: row.loc_place || '', city: row.city || '',
         when: row.live ? 'LIVE NOW' : (row.when_at || ''), live: !!row.live, max: Number(row.max || row.size || 2),
-        members, who: row.who || 'Everyone', reqs: reqRows.map(r => ({ u: r.user_id, at: r.at })),
+        members, who: row.who || 'Everyone', reqs: reqRows.map(r => ({ u: r.user_id === uid ? 'me' : r.user_id, at: r.at })),
         status: row.status || 'open', day: row.day || 'Today', auto: !!row.auto,
         event: row.event_id || null, spot: row.spot || '', created: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
         _shared: true, _supabaseCreatorUid: row.creator

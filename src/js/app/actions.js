@@ -280,15 +280,92 @@ const A = {
             return toast('This one\'s ' + p.who.toLowerCase() + ' 🫶');
         modal(`\<h2 style="margin-top:0">Ask to join the squad 👀\</h2>\<p>\<b>${esc(p.title)}\</b>\<br>\<span class="mut">${esc(p.loc)} · ${p.live ? 'Live now' : p.when} · ${(Number.isFinite(p.memberCount) ? p.memberCount : p.members.length)} / ${p.max} people${p.who != 'Everyone' ? ' · ' + p.who : ''}\</span>\</p>\<p class="mut">${esc(usr(p.creator).name)} checks your profile, then accepts or passes.\</p>\<button class="btn pink wide" data-a="cjoin" data-v="${p.id}">Send request\</button>\<p style="text-align:center">\<button class="btn ghost sm" data-a="close">Nvm\</button>\</p>`);
     },
-    cjoin(e) {
+    async cjoin(e) {
         const p = pl(e.dataset.v);
         const c = joinCheck(p);
         if (c != 'ok') {
             modal('');
-            if (c == 'auth' || c == 'onboarding' || c == 'member')
-                return;
+            if (c === 'auth') {
+                if (typeof window.requireAuth === 'function') return window.requireAuth({ a: '', hash: '#/explore' }, null, 'Sign in to explore');
+                return toast('Sign in to request to join this squad.');
+            }
+            if (c === 'onboarding') {
+                return toast('Finish setting up your profile before requesting to join.');
+            }
+            if (c === 'member') return toast('You are already in this squad.');
             return toast(JOIN_MSG[c] ? JOIN_MSG[c](p) : 'This plan is no longer available.');
         }
+        if (!p) { modal(''); return toast('This plan is no longer available.'); }
+        if (p.demo) { modal(''); if (typeof window.requireAuth === 'function') return window.requireAuth({ a: '', hash: '#/explore' }, null, 'Sign in to explore'); return toast('Sign in to discover real plans.'); }
+
+        /* Published shared plans must use the database transaction; local-only state is not a request. */
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            const client = getSupabaseClient();
+            if (!client) { modal(''); return toast('Connection unavailable. Please sign in again and retry.'); }
+            const button = e && e.closest ? e.closest('button') : null;
+            if (button) { button.disabled = true; button.textContent = 'Sending…'; }
+            try {
+                const result = await client.rpc('request_shared_plan_join', { p_plan_id: p.id });
+                if (result.error) throw result.error;
+                const status = result.data && result.data.status;
+                if (status === 'pending' || status === 'accepted') {
+                    /* The RPC is authoritative. Reflect its result locally before doing any secondary reads,
+                       so a successful write never looks like a no-op if the feed refresh is delayed or fails. */
+                    const cachedPlan = (S.plans || []).find(x => String(x.id) === String(p.id));
+                    const statePlan = cachedPlan || p;
+                    if (status === 'accepted') {
+                        statePlan.members = [...new Set([...(statePlan.members || []), 'me'])];
+                        statePlan.reqs = (statePlan.reqs || []).filter(r => r.u !== 'me');
+                        statePlan.memberCount = Math.max(Number(statePlan.memberCount || 0), statePlan.members.length);
+                    } else {
+                        statePlan.reqs = (statePlan.reqs || []).filter(r => r.u !== 'me');
+                        statePlan.reqs.push({ u: 'me', at: new Date().toISOString() });
+                    }
+                    if (!cachedPlan) {
+                        S.plans = S.plans || [];
+                        S.plans.push(statePlan);
+                    }
+                    save();
+
+                    /* Refresh the server-owned view, but don't turn a successful RPC into a failed UI action
+                       because a follow-up SELECT failed. The SELECT policy is also reinforced in migration 0015. */
+                    try {
+                        await refreshSharedPlans({ render: false });
+                    } catch (refreshErr) {
+                        console.warn('[join] request saved; shared-plan refresh failed:', refreshErr && (refreshErr.code || refreshErr.message) || refreshErr);
+                    }
+
+                    const refreshedPlan = (S.plans || []).find(x => String(x.id) === String(p.id));
+                    const finalPlan = refreshedPlan || statePlan;
+                    if (status === 'accepted') {
+                        finalPlan.members = [...new Set([...(finalPlan.members || []), 'me'])];
+                        finalPlan.reqs = (finalPlan.reqs || []).filter(r => r.u !== 'me');
+                        finalPlan.memberCount = Math.max(Number(finalPlan.memberCount || 0), finalPlan.members.length);
+                    } else if (!(finalPlan.reqs || []).some(r => r.u === 'me')) {
+                        finalPlan.reqs = [...(finalPlan.reqs || []), { u: 'me', at: new Date().toISOString() }];
+                    }
+                    save();
+                    modal('');
+                    render();
+
+                    if (status === 'accepted') {
+                        confetti();
+                        return modal(`<div class="authst"><span class="okc">${I('check', '26px')}</span><h2>You're in 🎉</h2><p class="mut">Your membership is saved. The group chat is unlocked.</p></div><a class="btn pink wide" href="#/gc/${p.id}" data-a="close">Enter the GC</a>`);
+                    }
+                    return modal('<h2 style="margin-top:0">Request sent ⏳</h2><p class="mut">Your request is saved. The host can now review it.</p><button class="btn pink wide" data-a="close">Cool</button>');
+                }
+                const messages = {host:'You host this squad already.',member:'You are already a member.',removed:'You can’t request to join this squad.',rejected:'The host previously declined this request.',full:'This squad is full.',closed:'This plan is closed.',blocked:'You or the host has blocked the other account.',gender:'This plan is not available for your profile.',location_mismatch:'Your saved profile city must match this plan’s city to join.',not_found:'This plan is no longer available.'};
+                modal('');
+                return toast(messages[status] || 'The request was not saved. Please try again.');
+            } catch (err) {
+                console.error('[join] request_shared_plan_join failed:', err && (err.code || err.message) || err);
+                modal('');
+                return toast('Could not send your request. Check your connection and try again.');
+            } finally {
+                if (button) { button.disabled = false; button.textContent = 'Send request'; }
+            }
+        }
+
         const r = memRequest(p, 'me');
         if (!r.ok) {
             modal('');
@@ -297,46 +374,58 @@ const A = {
         if (r.state == 'accepted') {
             S.me.rel.joined++;
             sys(p.id, `${S.me.name} joined the squad 👋`);
-            notify(p.creator, {
-                type: 'member',
-                ic: 'user-plus',
-                c: 'green',
-                t: `${S.me.name} joined your squad`,
-                b: p.title,
-                planId: p.id,
-                userId: 'me'
-            });
-            save();
-            confetti();
+            notify(p.creator, { type: 'member', ic: 'user-plus', c: 'green', t: `${S.me.name} joined your squad`, b: p.title, planId: p.id, userId: 'me' });
+            save(); confetti();
             return modal(`<div class="authst"><span class="okc">${I('check', '26px')}</span><h2>You're in 🎉</h2><p class="mut">This host auto-accepts. The GC is unlocked.</p></div><a class="btn pink wide" href="#/gc/${p.id}" data-a="close">Enter the GC</a>`);
         }
-        notify(p.creator, {
-            type: 'join_request',
-            ic: 'user-plus',
-            c: 'pink',
-            t: `${S.me.name} wants to join your squad`,
-            b: `${p.title} · tap to review`,
-            planId: p.id,
-            userId: 'me'
-        });
+        notify(p.creator, { type: 'join_request', ic: 'user-plus', c: 'pink', t: `${S.me.name} wants to join your squad`, b: `${p.title} · tap to review`, planId: p.id, userId: 'me' });
         save();
         modal(`<h2 style="margin-top:0">Request sent ⏳</h2><p class="mut">You're not in yet. The host decides after seeing your profile.</p><button class="btn pink wide" data-a="close">Cool</button>`);
     },
-    unreq(e) {
+    async unreq(e) {
         const p = pl(e.dataset.v);
-        if (!p || membership(p, 'me') != 'pending')
-            return toast('That request is no longer there.');
-        if (!memCancelRequest(p, 'me').ok)
-            return toast('That request is no longer there.');
-        resolveJoinNotifs(p.id, 'me');
-        save();
+        if (!p || membership(p, 'me') != 'pending') return toast('That request is no longer there.');
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            try {
+                const client = getSupabaseClient();
+                if (!client) throw new Error('supabase_not_configured');
+                const result = await client.rpc('cancel_shared_plan_join', { p_plan_id: p.id });
+                if (result.error) throw result.error;
+                if (!['ok','not_pending'].includes(result.data && result.data.status)) throw new Error('request_not_cancelled');
+                await refreshSharedPlans({ render: false });
+                modal(''); render(); toast('Join request cancelled.');
+                return;
+            } catch (err) {
+                console.error('[join] cancel failed:', err && (err.code || err.message) || err);
+                return toast('Could not cancel this request. Please try again.');
+            }
+        }
+        if (!memCancelRequest(p, 'me').ok) return toast('That request is no longer there.');
+        resolveJoinNotifs(p.id, 'me'); save();
     },
-    accept(e) {
+    async accept(e) {
         const parts = (e.dataset.v || '').split('|');
         const p = pl(e.dataset.k || parts[0]);
         const u = e.dataset.k ? e.dataset.v : parts[1];
-        if (!p || !idOk(u))
-            return toast('This join request is no longer available.');
+        if (!p || !idOk(u)) return toast('This join request is no longer available.');
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            try {
+                const client = getSupabaseClient();
+                if (!client) throw new Error('supabase_not_configured');
+                const result = await client.rpc('decide_shared_plan_join', { p_plan_id: p.id, p_user_id: u, p_approve: true });
+                if (result.error) throw result.error;
+                const status = result.data && result.data.status;
+                if (status !== 'accepted') {
+                    const msg = { forbidden:'Only the host can approve requests.',closed:'This plan is no longer open.',full:'Squad full 🔥 Free up a spot to approve this request.',blocked:'You or this person has blocked the other account.',not_pending:'This request is no longer pending.' };
+                    return toast(msg[status] || 'This join request could not be approved.');
+                }
+                await refreshSharedPlans({ render: false });
+                modal(''); toast('Request approved 🫡'); render(); return;
+            } catch (err) {
+                console.error('[join] approval failed:', err && (err.code || err.message) || err);
+                return toast('Could not approve this request. Please try again.');
+            }
+        }
         const r = memApprove(p, u, 'me');
         if (!r.ok)
             return toast({
@@ -368,12 +457,26 @@ const A = {
         toast(usr(u).name + ' is in 🫡');
         render();
     },
-    reject(e) {
+    async reject(e) {
         const parts = (e.dataset.v || '').split('|');
         const p = pl(e.dataset.k || parts[0]);
         const u = e.dataset.k ? e.dataset.v : parts[1];
-        if (!p || !idOk(u))
-            return toast('This join request is no longer available.');
+        if (!p || !idOk(u)) return toast('This join request is no longer available.');
+        if (p._shared && typeof getSupabaseClient === 'function') {
+            try {
+                const client = getSupabaseClient();
+                if (!client) throw new Error('supabase_not_configured');
+                const result = await client.rpc('decide_shared_plan_join', { p_plan_id: p.id, p_user_id: u, p_approve: false });
+                if (result.error) throw result.error;
+                const status = result.data && result.data.status;
+                if (status !== 'rejected') return toast(status === 'forbidden' ? 'Only the host can decline requests.' : 'This join request is no longer available.');
+                await refreshSharedPlans({ render: false });
+                modal(''); toast('Passed 🫶'); render(); return;
+            } catch (err) {
+                console.error('[join] rejection failed:', err && (err.code || err.message) || err);
+                return toast('Could not decline this request. Please try again.');
+            }
+        }
         const r = memReject(p, u, 'me');
         if (!r.ok)
             return toast({

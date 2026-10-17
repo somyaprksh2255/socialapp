@@ -1,0 +1,38 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const read = p => fs.readFileSync(path.join(root, p), 'utf8');
+const selectors = read('src/js/state/selectors.js');
+const access = read('src/js/state/access.js');
+const actions = read('src/js/app/actions.js');
+const events = read('src/js/app/events.js');
+const supabase = read('src/js/utils/supabase.js');
+const api = read('server/admin.mjs');
+const migration = read('supabase/migrations/0014_join_city_visibility.sql');
+const joinReadMigration = read('supabase/migrations/0015_fix_join_request_read_policy.sql');
+
+assert.match(selectors, /if \(tier\(\) === 'guest'\) return \[GUEST_DEMO_PLAN\]/, 'guests should receive only the in-memory demo plan');
+assert.match(selectors, /if \(tier\(\) !== 'ready'\) return \[\]/, 'Events must be hidden until the account profile is complete');
+assert.match(selectors, /const profileCity = String\(S\.me && S\.me\.city \|\| ''\)\.trim\(\)/, 'event filtering must use the saved profile city, not a temporary city filter');
+assert.match(selectors, /sameCity\(e\.city \|\| e\.locCity \|\| cityOfLoc\(e\.loc\), profileCity\)/, 'Events must match the saved profile city');
+assert.match(selectors, /!!selected && isCity\(planCity\(p\)\) && sameCity\(planCity\(p\), selected\)/, 'real plan discovery must require a city match');
+assert.match(access, /!!viewCity\(\)[\s\S]*sameCity\(planCity\(p\), viewCity\(\)\)/, 'direct plan visibility must require a city match');
+assert.match(actions, /rpc\('request_shared_plan_join'/, 'join must be persisted with the authoritative RPC');
+assert.match(actions, /rpc\('decide_shared_plan_join'/, 'host decisions must be persisted with the authoritative RPC');
+assert.match(actions, /rpc\('cancel_shared_plan_join'/, 'request cancellation must be persisted with the authoritative RPC');
+assert.match(actions, /statePlan\.reqs\.push\(\{ u: 'me'/, 'successful join RPC must immediately update the requester local pending state');
+assert.match(actions, /request saved; shared-plan refresh failed/, 'a follow-up refresh failure must not hide a successful join request');
+assert.match(supabase, /reqs: reqRows\.map\(r => \(\{ u: r\.user_id === uid \? 'me' : r\.user_id, at: r\.at \}\)\)/, 'refreshed pending request identity must map to the local me identifier');
+assert.match(events, /const clearEvents = \(\) => \{[\s\S]*?S\.events = \[\]/, 'Event cache clearing must be centralized and reusable');
+assert.match(events, /S\.me\.guest[\s\S]*clearEvents\(\)/, 'guest Event cache must be cleared');
+assert.match(events, /Authorization: 'Bearer ' \+ token/, 'Event API request must carry the authenticated token');
+assert.match(events, /normCity\(row\.payload && row\.payload\.city\) === normCity\(profileCity\)/, 'frontend must discard Events not in the saved profile city');
+assert.match(api, /app\.get\('\/api\/events',requireAuth/, 'Event API must require authentication');
+assert.match(api, /normalizeCity\(row\.payload\?\.city\)===city/, 'Event API must scope results to the normalized profile city');
+assert.match(migration, /lower\(btrim\(me\.city\)\) = lower\(btrim\(public\.plans\.city\)\)/, 'database plan policy must enforce city matching');
+assert.match(migration, /grant execute on function public\.request_shared_plan_join\(text\) to authenticated/, 'join RPC must be granted only to authenticated users');
+assert.match(joinReadMigration, /create policy join_requests_select[\s\S]*user_id = auth\.uid\(\)[\s\S]*p\.creator = auth\.uid\(\)/, 'requester and host must be able to read their join requests'); 
+console.log('City visibility and join workflow source checks passed.');

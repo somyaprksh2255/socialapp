@@ -7,6 +7,8 @@ const ID = /^[A-Za-z0-9_-]{6,64}$/;
 const REASONS = new Set(['Fake or spam','Made me uncomfortable','Inappropriate','Unsafe plan or place','Underage or lying about age','Harassment or bullying','Something else']);
 const REPORT_STATUSES = new Set(['new','reviewing','reviewed','dismissed','actioned']);
 
+const normalizeCity = value => String(value || '').trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+
 async function requireAdmin(req,res,next){
   try {
     const {data,error}=await getServerSupabase().from('squado_admins').select('user_id,email,role,active').eq('user_id',req.uid).eq('active',true).maybeSingle();
@@ -40,7 +42,20 @@ function eventPayload(raw,status){
 function logFailure(tag,e){console.error(`[${tag}]`,e?.message||'error');}
 
 export function mountAdminRoutes(app, requireAuth){
-  app.get('/api/events',async(req,res)=>{try{const {data,error}=await getServerSupabase().from('squado_events').select('id,payload,status,created_at,updated_at').eq('status','published').order('updated_at',{ascending:false});if(error)throw new Error('events_read_failed');res.json({events:data||[]});}catch(e){logFailure('events-public',e);res.status(503).json({error:'events_unavailable'});}});
+  /* Event discovery is authenticated and city-scoped on the server, not just hidden by frontend filters. */
+  app.get('/api/events',requireAuth,async(req,res)=>{
+    try {
+      const db=getServerSupabase();
+      const {data:profile,error:profileError}=await db.from('profiles').select('city').eq('id',req.uid).maybeSingle();
+      if(profileError)throw new Error('event_profile_read_failed');
+      const city=normalizeCity(profile?.city);
+      if(!city)return res.json({events:[]});
+      const {data,error}=await db.from('squado_events').select('id,payload,status,created_at,updated_at').eq('status','published').order('updated_at',{ascending:false});
+      if(error)throw new Error('events_read_failed');
+      const events=(data||[]).filter(row=>normalizeCity(row.payload?.city)===city);
+      res.json({events});
+    } catch(e) { logFailure('events-city-scoped',e); res.status(503).json({error:'events_unavailable'}); }
+  });
 
   app.post('/api/reports',requireAuth,async(req,res)=>{
     const b=req.body||{},reason=typeof b.reason==='string'?b.reason.trim():'';

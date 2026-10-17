@@ -8,7 +8,7 @@
     "start": "node scripts/dev-server.js",
     "build": "node scripts/build.js",
     "preview": "node scripts/dev-server.js dist",
-    "test": "node scripts/build.js && node tests/e2e.test.js && node tests/location-picker.test.js && node tests/admin-console.test.js && node tests/no-demo-runtime.test.js && node tests/server/no-anon-fallback.test.mjs && node tests/attendance.server.test.js",
+    "test": "node scripts/build.js && node tests/e2e.test.js && node tests/location-picker.test.js && node tests/admin-console.test.js && node tests/no-demo-runtime.test.js && node tests/city-visibility-join.test.mjs && node tests/server/no-anon-fallback.test.mjs && node tests/attendance.server.test.js",
     "server": "node server/index.mjs",
     "test:e2e": "node tests/e2e.test.js",
     "test:demo": "node tests/no-demo-runtime.test.js",
