@@ -354,7 +354,7 @@ const A = {
                     }
                     return modal('<h2 style="margin-top:0">Request sent ⏳</h2><p class="mut">Your request is saved. The host can now review it.</p><button class="btn pink wide" data-a="close">Cool</button>');
                 }
-                const messages = {host:'You host this squad already.',member:'You are already a member.',removed:'You can’t request to join this squad.',rejected:'The host previously declined this request.',full:'This squad is full.',closed:'This plan is closed.',blocked:'You or the host has blocked the other account.',gender:'This plan is not available for your profile.',not_found:'This plan is no longer available.'};
+                const messages = {host:'You host this squad already.',member:'You are already a member.',removed:'You can’t request to join this squad.',rejected:'The host previously declined this request.',full:'This squad is full.',closed:'This plan is closed.',blocked:'You or the host has blocked the other account.',gender:'This plan is not available for your profile.',location_mismatch:'Your saved profile city must match this plan’s city to join.',not_found:'This plan is no longer available.'};
                 modal('');
                 return toast(messages[status] || 'The request was not saved. Please try again.');
             } catch (err) {
