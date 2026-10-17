@@ -24,7 +24,7 @@ const notify = (to, o) => {
 const myNotifs = () =>
     tier() == 'guest'
         ? []
-        : [...(S.remoteNotifs || []), ...(S.notifs || [])].filter(n => n.to == 'me' && !SILENT_NOTIF.includes(n.type));
+        : [...(S.remoteNotifs || []), ...(S.notifs || [])].filter(n => n.to == 'me' && !SILENT_NOTIF.includes(n.type)).sort((a, b) => Number(b.at || 0) - Number(a.at || 0));
 
 const notifAgo = n => {
     if (!n.at)
