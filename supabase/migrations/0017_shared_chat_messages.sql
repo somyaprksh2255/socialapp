@@ -17,6 +17,26 @@ create table if not exists public.messages (
 alter table public.messages add column if not exists media_path text;
 alter table public.messages add column if not exists loc jsonb;
 alter table public.messages add column if not exists created_at timestamptz not null default now();
+
+-- Photos must reference uploaded media so other members can load them.
+-- Use a catalog check because PostgreSQL doesn't support ADD CONSTRAINT IF NOT EXISTS.
+do $
+begin
+    if not exists (
+        select 1
+        from pg_constraint
+        where conrelid = 'public.messages'::regclass
+          and conname = 'messages_photo_media_chk'
+    ) then
+        alter table public.messages
+            add constraint messages_photo_media_chk
+            check (
+                kind not in ('photo', 'photo-location')
+                or nullif(btrim(media_path), '') is not null
+            );
+    end if;
+end
+$;
 create index if not exists messages_plan_created_idx on public.messages(plan_id, created_at);
 
 alter table public.messages enable row level security;
