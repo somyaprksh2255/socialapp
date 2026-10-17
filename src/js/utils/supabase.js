@@ -681,7 +681,18 @@ async function refreshSharedChatMessages(planId, options = {}) {
         S.msgs[key] = mapped;
         if (typeof save === 'function') save();
         if (changed && options.render !== false && location.hash === '#/gc/' + key && typeof render === 'function') {
+            const input = typeof document !== 'undefined' ? document.activeElement : null;
+            const keepComposer = input && input.id === 'mi';
+            const start = keepComposer && Number.isInteger(input.selectionStart) ? input.selectionStart : null;
+            const end = keepComposer && Number.isInteger(input.selectionEnd) ? input.selectionEnd : null;
             render();
+            const replacement = keepComposer && typeof document !== 'undefined' ? document.getElementById('mi') : null;
+            if (replacement) {
+                replacement.focus();
+                if (start !== null && end !== null && typeof replacement.setSelectionRange === 'function') {
+                    try { replacement.setSelectionRange(start, end); } catch (_) { }
+                }
+            }
             if (typeof scrollTo === 'function') scrollTo(0, 1e6);
         }
         return mapped;
