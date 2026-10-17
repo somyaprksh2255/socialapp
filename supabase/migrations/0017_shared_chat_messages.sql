@@ -5,7 +5,7 @@ begin;
 create table if not exists public.messages (
     id uuid primary key default gen_random_uuid(),
     plan_id text not null references public.plans(id) on delete cascade,
-    by uuid references public.profiles(id) on delete set null,
+    by uuid references public.profiles(auth_uid) on delete set null,
     kind text not null default 'text',
     text text,
     media_path text,
@@ -35,7 +35,7 @@ grant select, insert on public.messages to authenticated;
 
 create table if not exists public.message_reactions (
     message_id uuid not null references public.messages(id) on delete cascade,
-    user_id uuid not null references public.profiles(id) on delete cascade,
+    user_id uuid not null references public.profiles(auth_uid) on delete cascade,
     emoji text not null check (emoji in ('🔥', '🕺', '😭')),
     created_at timestamptz not null default now(),
     primary key (message_id, user_id)
