@@ -41,7 +41,7 @@ assert(locations.includes("const isCity = n => typeof n === 'string' && n.trim()
 assert(onboarding.includes('data-a="locationPicker" data-v="ob.city"') && onboarding.includes('Nearby places and local suggestions become available after you finish onboarding'), 'Onboarding city must be selected separately from local places');
 assert(!read('src/js/components/profile/EditProfileSheet.js').includes('data-a="geoPick" data-k="ed.city"'), 'Profile edit should change the city only, not set an approximate local area');
 assert(admin.includes('data-search-event-location') && admin.includes('locationSource!==\'openstreetmap-nominatim\''), 'Admin Events must require a map-selected location');
-assert(home.includes("e.status === 'published' && isCity(e.city)"), 'Home Event suggestions must be city-relevant');
+assert(home.includes("e.status === 'published'") && read('src/js/app/events.js').includes('normCity(row.payload && row.payload.city) === normCity(profileCity)'), 'Home Event suggestions must be city-relevant');
 assert(geo.includes('Use your live location to see nearby plans. Only an approximate area is used for discovery.'), 'Location help copy must remain concise');
 assert(read('src/js/pages/profile.js').includes('Show this QR to your meetup host to check in.') && !read('src/js/pages/profile.js').includes('Cross-device scanning needs a deployed'), 'Profile QR must use concise user-facing copy');
 assert(!read('src/js/components/squads/AttendanceSheet.js').includes('see README, QR attendance'), 'Attendance UI must not show README/backend implementation notes');
