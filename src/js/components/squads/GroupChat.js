@@ -187,7 +187,7 @@ function groupChat(id) {
                     data-a="send"
                     data-v="${id}"
                     aria-label="Send message"
-                    ${d ? '' : 'disabled'}
+                    ${d && O.chat.sendingId !== id ? '' : 'disabled'}
                 >
                     ${I('send', '18px')}
                 </button>
